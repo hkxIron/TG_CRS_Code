@@ -9715,7 +9715,7 @@ skype
 ea
 cg
 sp
-##fc
+##full_connection
 ##www
 yes
 edge

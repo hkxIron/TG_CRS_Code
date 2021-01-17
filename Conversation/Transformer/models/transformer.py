@@ -262,14 +262,14 @@ class TransformerResponseWrapper(nn.Module):
 
 class TransformerEncoder4kg(nn.Module):
     """
-    Transformer encoder module.
+    Transformer transfomer_encoder module.
 
     :param int n_heads: the number of multihead attention heads.
     :param int n_layers: number of transformer layers.
     :param int embedding_size: the embedding sizes. Must be a multiple of n_heads.
     :param int ffn_size: the size of the hidden layer in the FFN
     :param embedding: an embedding matrix for the bottom layer of the transformer.
-        If none, one is created for this encoder.
+        If none, one is created for this transfomer_encoder.
     :param float dropout: Dropout used around embeddings and before layer
         layer normalizations. This is used in Vaswani 2017 and works well on
         large datasets.
@@ -395,14 +395,14 @@ class TransformerEncoderLayer(nn.Module):
 
 class TransformerEncoder(nn.Module):
     """
-    Transformer encoder module.
+    Transformer transfomer_encoder module.
 
     :param int n_heads: the number of multihead attention heads.
     :param int n_layers: number of transformer layers.
     :param int embedding_size: the embedding sizes. Must be a multiple of n_heads.
     :param int ffn_size: the size of the hidden layer in the FFN
     :param embedding: an embedding matrix for the bottom layer of the transformer.
-        If none, one is created for this encoder.
+        If none, one is created for this transfomer_encoder.
     :param float dropout: Dropout used around embeddings and before layer
         layer normalizations. This is used in Vaswani 2017 and works well on
         large datasets.
@@ -517,14 +517,14 @@ class TransformerEncoder(nn.Module):
 
 class TransformerEncoder_mask(nn.Module):
     """
-    Transformer encoder module.
+    Transformer transfomer_encoder module.
 
     :param int n_heads: the number of multihead attention heads.
     :param int n_layers: number of transformer layers.
     :param int embedding_size: the embedding sizes. Must be a multiple of n_heads.
     :param int ffn_size: the size of the hidden layer in the FFN
     :param embedding: an embedding matrix for the bottom layer of the transformer.
-        If none, one is created for this encoder.
+        If none, one is created for this transfomer_encoder.
     :param float dropout: Dropout used around embeddings and before layer
         layer normalizations. This is used in Vaswani 2017 and works well on
         large datasets.
@@ -717,7 +717,7 @@ class TransformerDecoder(nn.Module):
     :param int embedding_size: the embedding sizes. Must be a multiple of n_heads.
     :param int ffn_size: the size of the hidden layer in the FFN
     :param embedding: an embedding matrix for the bottom layer of the transformer.
-        If none, one is created for this encoder.
+        If none, one is created for this transfomer_encoder.
     :param float dropout: Dropout used around embeddings and before layer
         layer normalizations. This is used in Vaswani 2017 and works well on
         large datasets.
@@ -910,7 +910,7 @@ class TransformerDecoderKG(nn.Module):
     :param int embedding_size: the embedding sizes. Must be a multiple of n_heads.
     :param int ffn_size: the size of the hidden layer in the FFN
     :param embedding: an embedding matrix for the bottom layer of the transformer.
-        If none, one is created for this encoder.
+        If none, one is created for this transfomer_encoder.
     :param float dropout: Dropout used around embeddings and before layer
         layer normalizations. This is used in Vaswani 2017 and works well on
         large datasets.
@@ -1042,7 +1042,7 @@ class TransformerMemNetModel(nn.Module):
                 n_positions=n_positions,
             )
 
-        # build memory encoder
+        # build memory transfomer_encoder
         if opt.get('wrap_memory_encoder', False):
             self.memory_transformer = TransformerResponseWrapper(
                 self.context_encoder, self.context_encoder.out_dim
@@ -1106,7 +1106,7 @@ class TorchGeneratorModel(nn.Module):
     """
     This Interface expects you to implement model with the following reqs:
 
-    :attribute model.encoder:
+    :attribute model.transfomer_encoder:
         takes input returns tuple (enc_out, enc_hidden, attn_mask)
 
     :attribute model.decoder:
@@ -1143,7 +1143,7 @@ class TorchGeneratorModel(nn.Module):
             infer this automatically.
 
         :param encoder_states:
-            Output of the encoder model.
+            Output of the transfomer_encoder model.
 
         :type encoder_states:
             Model specific
@@ -1187,7 +1187,7 @@ class TorchGeneratorModel(nn.Module):
             LongTensor[bsz, time]
 
         :param encoder_states:
-            Output of the encoder. Model specific types.
+            Output of the transfomer_encoder. Model specific types.
 
         :type encoder_states:
             model specific
@@ -1209,7 +1209,7 @@ class TorchGeneratorModel(nn.Module):
 
     def reorder_encoder_states(self, encoder_states, indices):
         """
-        Reorder encoder states according to a new set of indices.
+        Reorder transfomer_encoder states according to a new set of indices.
 
         This is an abstract method, and *must* be implemented by the user.
 
@@ -1235,7 +1235,7 @@ class TorchGeneratorModel(nn.Module):
                       [0.3]]
 
         :param encoder_states:
-            output from encoder. type is model specific.
+            output from transfomer_encoder. type is model specific.
 
         :type encoder_states:
             model specific
@@ -1247,8 +1247,8 @@ class TorchGeneratorModel(nn.Module):
         :type indices: list[int]
 
         :return:
-            The re-ordered encoder states. It should be of the same type as
-            encoder states, and it must be a valid input to the decoder.
+            The re-ordered transfomer_encoder states. It should be of the same type as
+            transfomer_encoder states, and it must be a valid input to the decoder.
 
         :rtype:
             model specific
@@ -1297,7 +1297,7 @@ class TorchGeneratorModel(nn.Module):
         Get output predictions from the model.
 
         :param xs:
-            input to the encoder
+            input to the transfomer_encoder
         :type xs:
             LongTensor[bsz, seqlen]
         :param ys:
@@ -1307,8 +1307,8 @@ class TorchGeneratorModel(nn.Module):
             LongTensor[bsz, outlen]
         :param prev_enc:
             if you know you'll pass in the same xs multiple times, you can pass
-            in the encoder output from the last forward pass to skip
-            recalcuating the same encoder output.
+            in the transfomer_encoder output from the last forward pass to skip
+            recalcuating the same transfomer_encoder output.
         :param maxlen:
             max number of tokens to decode. if not set, will use the length of
             the longest label this model has seen. ignored when ys is not None.
@@ -1323,7 +1323,7 @@ class TorchGeneratorModel(nn.Module):
               (FloatTensor[bsz, seqlen, num_features])
             - candidate_scores are the score the model assigned to each candidate.
               (FloatTensor[bsz, num_cands])
-            - encoder_states are the output of model.encoder. Model specific types.
+            - encoder_states are the output of model.transfomer_encoder. Model specific types.
               Feed this back in to skip encoding on the next call.
         """
         if ys is not None:

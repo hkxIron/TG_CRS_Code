@@ -14,6 +14,7 @@ def gelu(x):
         (x + 0.044715 * torch.pow(x, 3))))
         Also see https://arxiv.org/abs/1606.08415
     """
+    # erf:是一个曲面积分：2/sqrt(pi)*Integrate(0,x, e^(-t^2), t)
     return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
 
 
@@ -34,29 +35,34 @@ class LayerNorm(nn.Module):
         self.variance_epsilon = eps
 
     def forward(self, x):
-        u = x.mean(-1, keepdim=True)
+        u = x.mean(-1, keepdim=True) # 在输入数据x的最后一个维度上计算均值
         # ipdb.set_trace()
-        s = (x - u).pow(2).mean(-1, keepdim=True)
-        x = (x - u) / torch.sqrt(s + self.variance_epsilon)
-        return self.weight * x + self.bias
+        s = (x - u).pow(2).mean(-1, keepdim=True) # 在最后一个维度上计算方差
+        x = (x - u) / torch.sqrt(s + self.variance_epsilon) # 在最后一个维度上计算方差
+        return self.weight * x + self.bias # w*x+b
 
 
 class Attention(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.hidden_dim = args.hidden_size
-        self.projection = nn.Sequential(nn.Linear(args.hidden_size, 64),
-                                        nn.ReLU(), nn.Linear(64, 1))
+        # out_features有多少个，bias就有多少个
+        # x->64->1
+        self.projection = nn.Sequential(nn.Linear(in_features=args.hidden_size, out_features=64),
+                                        nn.ReLU(),
+                                        nn.Linear(64, 1))
 
     def forward(self, input_tensor):
         batch_size = input_tensor.size(0)
-        # [B L 5 H] -> [B L 5 1]
+        # input:[B L 5 H] -> energy:[B L 5 1]
         energy = self.projection(input_tensor)
         # [B L 5]
+        # 在L这个维度计算概率分布
         weights = F.softmax(energy.squeeze(-1),
                             dim=-2)  # 可以返回weight 看attention的情况
         # [B L 5 H] * [B L 5 1] -> [B L 5 H]
         # 5个向量都已经乘过了权重 直接sum
+        # outputs: [B L 5 H]
         outputs = (input_tensor * weights.unsqueeze(-1)).sum(dim=-2)
         return outputs
 
@@ -82,9 +88,10 @@ class Embeddings(nn.Module):
     """
     def __init__(self, args):
         super(Embeddings, self).__init__()
-
+        # item_embeddings:[item_size, hidden_size]
         self.item_embeddings = nn.Embedding(
             args.item_size, args.hidden_size)  # 不要乱用padding_idx
+        # position_embeddings:[max_seq_length, hidden_size]
         self.position_embeddings = nn.Embedding(args.max_seq_length,
                                                 args.hidden_size)
 
@@ -94,14 +101,20 @@ class Embeddings(nn.Module):
         self.args = args
 
     def forward(self, input_ids, use_cuda=False):
+        # input_ids:[batch, seq_len]
         seq_length = input_ids.size(1)
-
-        position_ids = torch.arange(seq_length,
+        # 产生0~seq_len-1的序列
+        # position_ids:[seq_length]
+        position_ids = torch.arange(end=seq_length,
                                     dtype=torch.long,
                                     device=input_ids.device)
+        # input_ids:[batch, seq_len]
+        # position_ids:[1, seq_len] => 沿batch复制多份[batch, seq_len]
         position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
         # bug原因：inputs-ids有个item-size的id
+        # input_embeddings:[batch, seq_len, hidden_size]
         items_embeddings = self.item_embeddings(input_ids)
+        # position_embeddings:[batch, seq_len, hidden_size]
         position_embeddings = self.position_embeddings(position_ids)
 
         embeddings = items_embeddings + position_embeddings
@@ -118,13 +131,19 @@ class SelfAttention(nn.Module):
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
                 "heads (%d)" % (args.hidden_size, args.num_attention_heads))
+        # 有多少个头
         self.num_attention_heads = args.num_attention_heads
+        # 每个头的dim
         self.attention_head_size = int(args.hidden_size /
                                        args.num_attention_heads)
+        # 这个就是hidden_size = all_head_size
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
-        self.query = nn.Linear(args.hidden_size, self.all_head_size)
+        # query:[batch, seq_len, hidden_size]
+        self.query = nn.Linear(in_features=args.hidden_size, out_features=self.all_head_size)
+        # key:[batch, seq_len, hidden_size]
         self.key = nn.Linear(args.hidden_size, self.all_head_size)
+        # value:[batch, seq_len, hidden_size]
         self.value = nn.Linear(args.hidden_size, self.all_head_size)
 
         self.attn_dropout = nn.Dropout(args.attention_probs_dropout_prob)
@@ -137,54 +156,67 @@ class SelfAttention(nn.Module):
     def transpose_for_scores(self, x):
         '''
             args:
-            x:
-                (bs, seq_len, all_head_size)
+            x: (batch_size, seq_len, all_head_size)
+
             return:
             x.permute(0, 2, 1, 3):
-                (bs, num_heads, seq_len, head_size)
+                (batch_size, num_heads, seq_len, head_size)
         '''
+        # new_x_shape:[batch_size, seq_len, num_head, head_size]
         new_x_shape = x.size()[:-1] + (self.num_attention_heads,
                                        self.attention_head_size)
         x = x.view(*new_x_shape)
 
+        # permute:[batch_size, num_head, seq_len, head_size]
         return x.permute(0, 2, 1, 3)
 
     def forward(self, input_tensor, attention_mask):
+        # input_tensor:[batch_size, seq_len, hidden_size]
         mixed_query_layer = self.query(input_tensor)
         mixed_key_layer = self.key(input_tensor)
         mixed_value_layer = self.value(input_tensor)
 
+        # query_layer:[batch_size, num_heads, seq_len, head_size]
         query_layer = self.transpose_for_scores(mixed_query_layer)
+        # key_layer:[batch_size, num_heads, seq_len, head_size]
         key_layer = self.transpose_for_scores(mixed_key_layer)
         value_layer = self.transpose_for_scores(mixed_value_layer)
-        # Take the dot product between "query" and "key" to get the raw attention scores.
-        attention_scores = torch.matmul(query_layer, key_layer.transpose(
-            -1, -2))  # (bs, num_heads, seq_len, seq_len)
 
-        attention_scores = attention_scores / math.sqrt(
-            self.attention_head_size)
+        # Take the dot product between "query" and "key" to get the raw attention scores.
+        # query_layer:[batch_size, num_heads, seq_len, head_size]
+        # key_layer: [batch_size, num_heads, seq_len, head_size] => [batch_size, num_heads,  head_size, seq_len]
+        # attention_scores:[batch_size, num_heads, seq_len, seq_len], 最后两维进行矩阵相乘
+        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))  # (batch_size, num_heads, seq_len, seq_len)
+
+        attention_scores = attention_scores / math.sqrt(self.attention_head_size) # 维度归一化
         # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
 
-        # [batch_size heads seq_len seq_len] scores
-        # [batch_size 1 1 seq_len]
+        # attention_scores:[batch_size,heads,seq_len,seq_len]
+        # attention_mask:[batch_size,1,seq_len,seq_len]
         attention_scores = attention_scores + attention_mask
 
         # Normalize the attention scores to probabilities.
+        # attention_probs:[batch_size,heads,seq_len,seq_len], 即query对各个key的概率分布
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
-        attention_probs = self.attn_dropout(attention_probs)
+        attention_probs = self.attn_dropout(attention_probs) # 在attention的地方进行了dropout
 
+        # attention_probs:[batch_size, num_heads, seq_len, seq_len], 即query对各个key的概率分布
+        # value_layer:    [batch_size, num_heads, seq_len, head_size]
+        # context_layer:  [batch_size, num_heads, seq_len, head_size]
         context_layer = torch.matmul(attention_probs, value_layer)
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (
-            self.all_head_size, )
+        # context_layer:  [batch_size, seq_len, num_heads, head_size]
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous() # 连续内存存储
+        # new_context_layer_shape:  [batch_size, seq_len, all_head_size]
+        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size, )
+        # context_layer:  [batch_size, seq_len, all_head_size]
         context_layer = context_layer.view(*new_context_layer_shape)
 
         hidden_states = self.dense(context_layer)
         hidden_states = self.out_dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor) # residual block
 
         return hidden_states
 
@@ -192,45 +224,51 @@ class SelfAttention(nn.Module):
 class Intermediate(nn.Module):
     def __init__(self, args):
         super(Intermediate, self).__init__()
+        # dense_1:[hidden_size, hidden_size*4]
         self.dense_1 = nn.Linear(args.hidden_size, args.hidden_size * 4)
         if isinstance(args.hidden_act, str):
             self.intermediate_act_fn = ACT2FN[args.hidden_act]
         else:
             self.intermediate_act_fn = args.hidden_act
 
+        # dense_2:[hidden_size*4, hidden_size]
         self.dense_2 = nn.Linear(args.hidden_size * 4, args.hidden_size)
         self.LayerNorm = LayerNorm(args.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(args.hidden_dropout_prob)
 
+    """
+    将input_tensor先通过两次dense全连接，然后是残差模块
+    """
     def forward(self, input_tensor):
-
+        # hidden_states:[*, hidden_size*4]
         hidden_states = self.dense_1(input_tensor)
         hidden_states = self.intermediate_act_fn(hidden_states)
 
+        # hidden_states:[*, hidden_size]
         hidden_states = self.dense_2(hidden_states)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor) # residual block
         return hidden_states
 
-
+# 其实就是Transfomer block
 class Layer(nn.Module):
     def __init__(self, args):
         super(Layer, self).__init__()
         self.attention = SelfAttention(args)
         self.intermediate = Intermediate(args)
 
+    # 先attention,然后全连接+residual block
     def forward(self, hidden_states, attention_mask):
         attention_output = self.attention(hidden_states, attention_mask)
         intermediate_output = self.intermediate(attention_output)
         return intermediate_output
 
-
+# 其实就是Transfomer Encoder
 class Encoder(nn.Module):
     def __init__(self, args):
         super(Encoder, self).__init__()
-        layer = Layer(args)
-        self.layer = nn.ModuleList(
-            [copy.deepcopy(layer) for _ in range(args.num_hidden_layers)])
+        layer = Layer(args) #先attention,然后全连接+residual block
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(args.num_hidden_layers)]) # 有多少个transformer block
 
     def forward(self,
                 hidden_states,
@@ -238,9 +276,12 @@ class Encoder(nn.Module):
                 output_all_encoded_layers=True):
         all_encoder_layers = []
         for layer_module in self.layer:
+            # [batch_size, seq_len, hidden_size]
             hidden_states = layer_module(hidden_states, attention_mask)
+
             if output_all_encoded_layers:
                 all_encoder_layers.append(hidden_states)
+
         if not output_all_encoded_layers:
             all_encoder_layers.append(hidden_states)
         return all_encoder_layers

@@ -19,15 +19,16 @@ import math
 from copy import deepcopy
 from models.module import *
 
-
+# SASRec模型用来融合用户item交互历史
 class SASRecModel(nn.Module):
     def __init__(self, args):
         super(SASRecModel, self).__init__()
+        # embeddings: [batch, seq_len, hidden_size]
         self.embeddings = Embeddings(args)
-        self.encoder = Encoder(args)
+        self.transfomer_encoder = Encoder(args) # transfomer transfomer_encoder
         self.args = deepcopy(args)
 
-        self.act = nn.Tanh()
+        self.act = nn.Tanh() # 激活函数
         self.dropout = nn.Dropout(p=args.hidden_dropout_prob)
 
         self.apply(self.init_sas_weights)
@@ -38,24 +39,29 @@ class SASRecModel(nn.Module):
                 use_cuda=False,
                 output_all_encoded_layers=True):
         if attention_mask is None:
-            attention_mask = torch.ones_like(input_ids)  # (bs, seq_len)
+            attention_mask = torch.ones_like(input_ids)  # (batch_size, seq_len)
         # We create a 3D attention mask from a 2D tensor mask.
         # Sizes are [batch_size, 1, 1, to_seq_length]
         # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
         # this attention mask is more simple than the triangular masking of causal attention
         # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(
-            2)  # torch.int64, (bs, 1, 1, seq_len)
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)  # torch.int64, (batch_size, 1, 1, seq_len), 在1,2处插入维度
+
         # 添加mask 只关注前几个物品进行推荐
-        max_len = attention_mask.size(-1)
+        max_len = attention_mask.size(-1) # 输入的item长度
         attn_shape = (1, max_len, max_len)
+        # 上三角, [1, max_len, max_len]
         subsequent_mask = torch.triu(torch.ones(attn_shape),
                                      diagonal=1)  # torch.uint8
+        # 下三角,subsequent_mask: [1, 1, max_len, max_len]
         subsequent_mask = (subsequent_mask == 0).unsqueeze(1)
-        subsequent_mask = subsequent_mask.long()
+        subsequent_mask = subsequent_mask.long() # 转成int64类型
 
         if use_cuda:
             subsequent_mask = subsequent_mask.to(self.args.device)
+        # 下三角 extended_attention_mask: (batch_size, 1, 1, seq_len=max_len)
+        # subsequent_mask:[1, 1, max_len, max_len]
+        # extended_attention_mask:[batch_size, head_num=1, seq_len, seq_len]
         extended_attention_mask = extended_attention_mask * subsequent_mask
 
         # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
@@ -63,32 +69,44 @@ class SASRecModel(nn.Module):
         # positions we want to attend and -10000.0 for masked positions.
         # Since we are adding it to the raw scores before the softmax, this is
         # effectively the same as removing these entirely.
-        extended_attention_mask = extended_attention_mask.to(
-            dtype=next(self.parameters()).dtype)  # fp16 compatibility
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+
+        # extended_attention_mask:[batch_size, 1, seq_len, seq_len]
+        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype)  # fp16 compatibility
+
+        # extended_attention_mask:下三角全为0,上三角为-10000
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0 # 如果是1的地方（不被mask），就是0, 如果是0的地方(将被mask)，就是-10000
+        # input_ids:[batch_size, seq_len]
+        # embedding:[batch_size, seq_len, embed_size]
         embedding = self.embeddings(input_ids, use_cuda)
 
         # extended_attention_mask 是一个上三角矩阵，上三角的元素为-10000.0， dtype与parameter相同
-        encoded_layers = self.encoder(
+        # encoder见models.module.py
+        # embedding:[batch_size, seq_len, embed_size]
+        # extended_attention_mask:[batch_size, head_num=1, seq_len, seq_len]
+        encoded_layers = self.transfomer_encoder(
             embedding,
             extended_attention_mask,
-            output_all_encoded_layers=output_all_encoded_layers)
-        # [B L H]
-        sequence_output = encoded_layers[-1]
+            output_all_encoded_layers=output_all_encoded_layers)  # 是否输出所有layer的output
+        # encoded_layers,有L层输出，每层的shape:[batch_size, seq_len, hidden_size]
+        sequence_output = encoded_layers[-1] # 只取最后一层的输出
+        # [batch_size, seq_len, hidden_size]
         return sequence_output
 
     def init_sas_weights(self, module):
         """ Initialize the weights.
         """
         if isinstance(module, (nn.Linear, nn.Embedding)):
+            # 线性以及embedding是用正态分布初始化
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
             module.weight.data.normal_(mean=0.0,
                                        std=self.args.initializer_range)
         elif isinstance(module, LayerNorm):
+            # layernorm用1与0初始化
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
         if isinstance(module, nn.Linear) and module.bias is not None:
+            # nn.Linear bias用0初始化
             module.bias.data.zero_()
 
     def save_model(self, file_name):
@@ -99,7 +117,7 @@ class SASRecModel(nn.Module):
         load_states = torch.load(path, map_location=self.args.device)
         load_states_keys = set(load_states.keys())
         this_states_keys = set(self.state_dict().keys())
-        assert this_states_keys.issubset(this_states_keys)
+        assert this_states_keys.issubset(this_states_keys) # 这里应该是this_states_keys.issubset(load_states_keys)？
         key_not_used = load_states_keys - this_states_keys
         for key in key_not_used:
             del load_states[key]
@@ -111,7 +129,7 @@ class SASRecModel(nn.Module):
 
     def cross_entropy(self, seq_out, pos_ids, neg_ids, use_cuda=True):
 
-        # [batch seq_len hidden_size]
+        # [batch, seq_len, hidden_size]
         pos_emb = self.embeddings.item_embeddings(pos_ids)
         neg_emb = self.embeddings.item_embeddings(neg_ids)
 
@@ -136,36 +154,39 @@ class SASRecModel(nn.Module):
 
         return loss
 
-
+# bert模型用来融合用户回复历史
 class BERTModel(nn.Module):
     def __init__(self, args, num_class, bert_embed_size=768):
         super(BERTModel, self).__init__()
         bert_path = args.bert_path
         init_add = args.init_add
         self.args = args
+        # 加载预训练的bert模型
         self.bert = BertModel.from_pretrained(bert_path)
 
         for param in self.bert.parameters():
-            param.requires_grad = True
+            param.requires_grad = True # 需要对bert进行微调
 
-        self.fc = nn.Linear(bert_embed_size, num_class)
+        self.full_connection = nn.Linear(in_features=bert_embed_size, out_features=num_class)
         self.add_name = 'addition_model.pth'
-        if init_add:
+        if init_add: # 从现有参数中初始化全连接层
             self.load_addition_params(join(bert_path, self.add_name))
 
     def forward(self, x, raw_return=True):
+        # x:
         context = x[0]  # 输入的句子   (ids, seq_len, mask)
-        types = x[1]
-        mask = x[
-            2]  # 对padding部分进行mask，和句子相同size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
+        types = x[1] #  word_id/position_id/segment_id
+        mask = x[2]  # 对padding部分进行mask，和句子相同size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
+        # sequence_output, pooled_output, (hidden_states), (attentions)
+        # pooled: [batch_size,  bert_embed_size]
         _, pooled = self.bert(context,
                               token_type_ids=types,
                               attention_mask=mask)
 
-        if raw_return:
+        if raw_return: # 不需要经过全连接
             return pooled
-        else:
-            return self.fc(pooled)
+        else: # 需要经过全连接层
+            return self.full_connection(pooled)
 
     def compute_loss(self, y_pred, y, subset='test'):
         # ipdb.set_trace()
@@ -175,23 +196,26 @@ class BERTModel(nn.Module):
 
     def save_model(self, save_path):
         self.bert.save_pretrained(save_path)
-        torch.save(self.fc.state_dict(), join(save_path, self.add_name))
+        torch.save(self.full_connection.state_dict(), join(save_path, self.add_name))
 
     def load_addition_params(self, path):
-        self.fc.load_state_dict(torch.load(path,
-                                           map_location=self.args.device))
+        self.full_connection.load_state_dict(torch.load(path,
+                                                        map_location=self.args.device))
 
-
+# 将bert以及SASRec的结果融合起来
 class Fusion(nn.Module):
     def __init__(self, args, num_class, bert_embed_size=768):
         super(Fusion, self).__init__()
         self.args = args
         concat_embed_size = bert_embed_size + args.hidden_size
-        self.fc = nn.Linear(concat_embed_size, num_class)
+        self.full_connection = nn.Linear(in_features=concat_embed_size, out_features=num_class)
 
     def forward(self, SASRec_out, BERT_out):
+        # SASRec_out:[batch_size,  hidden_size]
+        # BERT_out:[batch_size,  bert_embed_size]
+        # represetation:[batch_size,  hidden_size+bert_embed_size]
         representation = torch.cat((SASRec_out, BERT_out), dim=1)
-        representation = self.fc(representation)
+        representation = self.full_connection(representation)
 
         return representation
 
@@ -220,15 +244,17 @@ class SASBERT(nn.Module):
             self.fusion.load_model(args.fusion_load_path)
 
     def forward(self, x):
-        x_bert = x[:3]
-        pooled = self.BERT(x_bert, raw_return=True)  # bs, hidden_size1
+        x_bert = x[:3] # context, type, mask
+        pooled = self.BERT(x_bert, raw_return=True)  # [batch_size, hidden_size1]
 
         input_ids, target_pos, input_mask, sample_negs = x[-4:]
+        # [batch_size, seq_len, hidden_size2]
         sequence_output = self.SASREC(
             input_ids, input_mask,
-            self.args.use_cuda)  # bs, max_len, hidden_size2
-        sequence_output = sequence_output[:, -1, :]  # bs, hidden_size2
+            self.args.use_cuda)  # batch_size, max_len, hidden_size2
+        sequence_output = sequence_output[:, -1, :]  # [batch_size, hidden_size2]
 
+        # represetation:[batch_size,  hidden_size+bert_embed_size]
         representation = self.fusion(sequence_output, pooled)  # bs, num_class
 
         return representation

@@ -34,20 +34,20 @@ Markdown==3.3.3
 MarkupSafe==1.1.1
 matplotlib==3.3.2
 mccabe==0.6.1
-mkl-fft==1.2.0
-mkl-random==1.2.0
-mkl-service==2.3.0
+#mkl-fft==1.2.0
+#mkl-random==1.2.0
+#mkl-service==2.3.0
 networkx==2.5
 nltk==3.5
 numba==0.51.2
-numpy @ file:///tmp/build/80754af9/numpy_and_numpy_base_1603570489231/work
-olefile @ file:///home/conda/feedstock_root/build_artifacts/olefile_1602866521163/work
+#numpy @ file:///tmp/build/80754af9/numpy_and_numpy_base_1603570489231/work
+#olefile @ file:///home/conda/feedstock_root/build_artifacts/olefile_1602866521163/work
 packaging==20.4
 pandas==1.1.4
 parso==0.7.1
 pexpect==4.8.0
 pickleshare==0.7.5
-Pillow @ file:///home/conda/feedstock_root/build_artifacts/pillow_1604748700719/work
+#Pillow @ file:///home/conda/feedstock_root/build_artifacts/pillow_1604748700719/work
 prompt-toolkit==3.0.8
 protobuf==3.14.0
 ptyprocess==0.6.0
@@ -68,7 +68,7 @@ scikit-learn==0.23.2
 scipy==1.5.4
 sentencepiece==0.1.94
 sh==1.14.1
-six @ file:///home/conda/feedstock_root/build_artifacts/six_1590081179328/work
+#six @ file:///home/conda/feedstock_root/build_artifacts/six_1590081179328/work
 smart-open==3.0.0
 smmap==3.0.4
 snowballstemmer==2.0.0

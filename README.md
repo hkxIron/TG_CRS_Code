@@ -182,3 +182,9 @@ If you use our code, please kindly cite our papers. [Towards Topic-Guided Conver
   year      = {2020}
 }
 ```
+
+
+## Data
+0619conv2user.pkl: 会话id -> user_id的映射
+user_long_history.json: 数据缺失,用户与电影的交互信息,即打分信息
+conv_long_history.json: 数据缺失,用户会话历史交互信息

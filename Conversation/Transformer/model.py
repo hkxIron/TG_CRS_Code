@@ -119,7 +119,7 @@ class TransformerModel(nn.Module):
             infer this automatically.
 
         :param encoder_states:
-            Output of the encoder model.
+            Output of the transfomer_encoder model.
 
         :type encoder_states:
             Model specific
@@ -170,7 +170,7 @@ class TransformerModel(nn.Module):
             LongTensor[bsz, time]
 
         :param encoder_states:
-            Output of the encoder. Model specific types.
+            Output of the transfomer_encoder. Model specific types.
 
         :type encoder_states:
             model specific
@@ -231,7 +231,7 @@ class TransformerModel(nn.Module):
         Get output predictions from the model.
 
         :param xs:
-            input to the encoder
+            input to the transfomer_encoder
         :type xs:
             LongTensor[bsz, seqlen]
         :param ys:
@@ -241,8 +241,8 @@ class TransformerModel(nn.Module):
             LongTensor[bsz, outlen]
         :param prev_enc:
             if you know you'll pass in the same xs multiple times, you can pass
-            in the encoder output from the last forward pass to skip
-            recalcuating the same encoder output.
+            in the transfomer_encoder output from the last forward pass to skip
+            recalcuating the same transfomer_encoder output.
         :param maxlen:
             max number of tokens to decode. if not set, will use the length of
             the longest label this model has seen. ignored when ys is not None.
@@ -257,7 +257,7 @@ class TransformerModel(nn.Module):
               (FloatTensor[bsz, seqlen, num_features])
             - candidate_scores are the score the model assigned to each candidate.
               (FloatTensor[bsz, num_cands])
-            - encoder_states are the output of model.encoder. Model specific types.
+            - encoder_states are the output of model.transfomer_encoder. Model specific types.
               Feed this back in to skip encoding on the next call.
         """
         if not test:
@@ -295,7 +295,7 @@ class TransformerModel(nn.Module):
 
     def reorder_encoder_states(self, encoder_states, indices):
         """
-        Reorder encoder states according to a new set of indices.
+        Reorder transfomer_encoder states according to a new set of indices.
 
         This is an abstract method, and *must* be implemented by the user.
 
@@ -321,7 +321,7 @@ class TransformerModel(nn.Module):
                       [0.3]]
 
         :param encoder_states:
-            output from encoder. type is model specific.
+            output from transfomer_encoder. type is model specific.
 
         :type encoder_states:
             model specific
@@ -333,8 +333,8 @@ class TransformerModel(nn.Module):
         :type indices: list[int]
 
         :return:
-            The re-ordered encoder states. It should be of the same type as
-            encoder states, and it must be a valid input to the decoder.
+            The re-ordered transfomer_encoder states. It should be of the same type as
+            transfomer_encoder states, and it must be a valid input to the decoder.
 
         :rtype:
             model specific

@@ -222,6 +222,8 @@ class TrainLoop_Ours():
         self.args.item_size = self.dataset['train'].movie_num
 
     def build_model(self):
+        # BERT用来编码用户回复历史
+        # SAS用来编码用户交互的item历史
         self.model = SASBERT(self.opt, self.args, self.movie_num)
         if self.use_cuda:
             self.model.to(self.device)  # todo
@@ -243,8 +245,8 @@ class TrainLoop_Ours():
                 # print("[Movie]", batch_data[3])
                 # ipdb.set_trace()
 
-                self.model.train()
-                self.zero_grad()
+                self.model.train() # model前向
+                self.zero_grad() # 梯度清0
                 batch_data = [data.to(self.device) for data in batch_data]
 
                 logit = self.model(batch_data)
@@ -255,8 +257,8 @@ class TrainLoop_Ours():
                 train_loss.append(loss.item())
                 losses.append(loss.item())
 
-                loss.backward()
-                self.optimizer.step()
+                loss.backward() # model反向, 计算梯度
+                self.optimizer.step() # 利用梯度更新参数
 
                 if (batch_idx + 1) % 50 == 0:
                     # 从上次预报到现在为止的loss均值，每50个batch预报一次
@@ -267,6 +269,7 @@ class TrainLoop_Ours():
             logger.info(
                 f'Epoch {i}, train loss = {sum(train_loss)/len(train_loss)}')
 
+            # 验证集
             # metrics_test = self.val('train')
             metrics_test = self.val('valid')
             _ = self.val('test')
@@ -311,9 +314,9 @@ class TrainLoop_Ours():
 
             with torch.no_grad():
                 batch_data = [data.to(self.device) for data in batch_data]
-                logit = self.model(batch_data)
+                logit = self.model(batch_data) # 前向推断
 
-                y = batch_data[3]
+                y = batch_data[3] # Movie
                 loss = self.model.compute_loss(logit, y)
 
                 self.compute_metircs(logit, y, metrics_test)
