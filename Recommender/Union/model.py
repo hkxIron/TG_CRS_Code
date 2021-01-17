@@ -34,8 +34,8 @@ class SASRecModel(nn.Module):
         self.apply(self.init_sas_weights)
 
     def forward(self,
-                input_ids,
-                attention_mask=None,
+                input_ids, # [batch_size, seq_len]
+                attention_mask=None, # [batch_size, seq_len]
                 use_cuda=False,
                 output_all_encoded_layers=True):
         if attention_mask is None:
@@ -127,31 +127,46 @@ class SASRecModel(nn.Module):
     def compute_loss(self, y_pred, y, subset='test'):
         pass
 
+    # seq_out:[batch, seq_len, hidden_size]
+    # pos_ids:[batch, seq_len]
+    # neg_ids:[batch, seq_len]
+    # loss:[batch*seq_len,1]
     def cross_entropy(self, seq_out, pos_ids, neg_ids, use_cuda=True):
-
-        # [batch, seq_len, hidden_size]
+        # pos_ids:[batch, seq_len]
+        # neg_ids:[batch, seq_len]
+        # pos_emb:[batch, seq_len, hidden_size]
+        # neg_emb:[batch, seq_len, hidden_size]
         pos_emb = self.embeddings.item_embeddings(pos_ids)
         neg_emb = self.embeddings.item_embeddings(neg_ids)
 
-        # [batch*seq_len hidden_size]
+        # pos_emb:[batch, seq_len, hidden_size]
+        # pos:[batch*seq_len, hidden_size], view相当于tf.reshape
+        # neg:[batch*seq_len, hidden_size]
         pos = pos_emb.view(-1, pos_emb.size(2))
         neg = neg_emb.view(-1, neg_emb.size(2))
 
-        # [batch*seq_len hidden_size]
+        # seq_out:[batch, seq_len, hidden_size]
+        # seq_emb:[batch*seq_len, hidden_size]
         seq_emb = seq_out.view(-1, self.args.hidden_size)
 
-        # [batch*seq_len]
-        pos_logits = torch.sum(pos * seq_emb, -1)
-        neg_logits = torch.sum(neg * seq_emb, -1)
+        # pos:[batch*seq_len, hidden_size]
+        # seq_emb:[batch*seq_len, hidden_size]
+        # pos_logits:[batch*seq_len, 1]
+        pos_logits = torch.sum(pos * seq_emb, -1) # 计算正样本embed与seq_emb的内积
+        neg_logits = torch.sum(neg * seq_emb, -1) # 计算负样本embed与seq_emb的内积
 
-        # [batch*seq_len]
-        istarget = (pos_ids > 0).view(
-            pos_ids.size(0) * self.args.max_seq_length).float()
-        loss = torch.sum(-torch.log(torch.sigmoid(pos_logits) + 1e-24) *
-                         istarget -
-                         torch.log(1 - torch.sigmoid(neg_logits) + 1e-24) *
-                         istarget) / torch.sum(istarget)
-
+        # pos_ids:[batch, seq_len]
+        # is_target:[batch*seq_len]
+        # 正样本的id>0,负样本的id<=0
+        istarget = (pos_ids > 0).view(pos_ids.size(0) * self.args.max_seq_length).float()
+        # -ylog(y_pred)- (1-y)log(1-y_pred)
+        # 背后的物理意义是:seq_out_emb与正样本的embeding内积更大,即更相似,与负样本更不相似
+        # pos_logits:[batch*seq_len, 1]
+        # is_target:[batch*seq_len]
+        # loss:[batch*seq_len,1]
+        loss = torch.sum(-torch.log(torch.sigmoid(pos_logits) + 1e-24) * istarget \
+                         -torch.log(1 - torch.sigmoid(neg_logits) + 1e-24) * istarget) \
+               / torch.sum(istarget)
         return loss
 
 # bert模型用来融合用户回复历史
@@ -184,14 +199,18 @@ class BERTModel(nn.Module):
                               attention_mask=mask)
 
         if raw_return: # 不需要经过全连接
+            # [batch_size, hidden_size]
             return pooled
         else: # 需要经过全连接层
+            # [batch_size, num_class]
             return self.full_connection(pooled)
 
+    # logit: [batch_size, num_class]
+    # y:[batch_size]
+    # loss:[batch_size]
     def compute_loss(self, y_pred, y, subset='test'):
         # ipdb.set_trace()
         loss = F.cross_entropy(y_pred, y)
-
         return loss
 
     def save_model(self, save_path):
@@ -202,7 +221,7 @@ class BERTModel(nn.Module):
         self.full_connection.load_state_dict(torch.load(path,
                                                         map_location=self.args.device))
 
-# 将bert以及SASRec的结果融合起来
+# 将bert以及SASRec的结果融合起来,是SASBERT模型的子模型
 class Fusion(nn.Module):
     def __init__(self, args, num_class, bert_embed_size=768):
         super(Fusion, self).__init__()
@@ -211,12 +230,12 @@ class Fusion(nn.Module):
         self.full_connection = nn.Linear(in_features=concat_embed_size, out_features=num_class)
 
     def forward(self, SASRec_out, BERT_out):
-        # SASRec_out:[batch_size,  hidden_size]
-        # BERT_out:[batch_size,  bert_embed_size]
+        # SASRec_out:[batch_size, hidden_size]
+        # BERT_out:[batch_size, bert_embed_size]
         # represetation:[batch_size,  hidden_size+bert_embed_size]
         representation = torch.cat((SASRec_out, BERT_out), dim=1)
+        # represetation:[batch_size, num_class]
         representation = self.full_connection(representation)
-
         return representation
 
     def save_model(self, file_name):
@@ -225,7 +244,6 @@ class Fusion(nn.Module):
 
     def load_model(self, path):
         self.load_state_dict(torch.load(path, map_location=self.args.device))
-
 
 class SASBERT(nn.Module):
     # 就是把两个子模型定义挪到下面了
@@ -236,6 +254,7 @@ class SASBERT(nn.Module):
 
         # bert
         self.BERT = BERTModel(self.args, num_class)
+        # SASRec
         self.SASREC = SASRecModel(self.args)
         self.fusion = Fusion(args, num_class)
 
@@ -245,18 +264,26 @@ class SASBERT(nn.Module):
 
     def forward(self, x):
         x_bert = x[:3] # context, type, mask
-        pooled = self.BERT(x_bert, raw_return=True)  # [batch_size, hidden_size1]
+        # pooled: [batch_size, hidden_size1]
+        pooled = self.BERT(x_bert, raw_return=True)
 
         input_ids, target_pos, input_mask, sample_negs = x[-4:]
-        # [batch_size, seq_len, hidden_size2]
+        # input_ids: [batch_size, seq_len]
+        # input_mask:[batch_size, seq_len]
+        # sequence_output:[batch_size, seq_len, hidden_size2]
         sequence_output = self.SASREC(
-            input_ids, input_mask,
-            self.args.use_cuda)  # batch_size, max_len, hidden_size2
-        sequence_output = sequence_output[:, -1, :]  # [batch_size, hidden_size2]
+            input_ids,
+            input_mask,
+            self.args.use_cuda
+        )
+        # sequence_output:[batch_size, seq_len, hidden_size2]
+        #              => [batch_size, hidden_size2]
+        sequence_output = sequence_output[:, -1, :]
 
-        # represetation:[batch_size,  hidden_size+bert_embed_size]
-        representation = self.fusion(sequence_output, pooled)  # bs, num_class
-
+        # sequence_output:[batch_size, hidden_size2]
+        # pooled:         [batch_size, hidden_size1]
+        # represetation:  [batch_size, num_class]
+        representation = self.fusion(sequence_output, pooled)
         return representation
 
     def save_model(self, module_name):
@@ -277,8 +304,7 @@ class SASBERT(nn.Module):
     def get_optimizer(self):
         bert_param_optimizer = list(self.BERT.named_parameters())  # 模型参数名字列表
         # bert_param_optimizer = [p for n, p in bert_param_optimizer]
-        other_param_optimizer = list(self.SASREC.named_parameters()) + \
-            list(self.fusion.named_parameters())
+        other_param_optimizer = list(self.SASREC.named_parameters()) + list(self.fusion.named_parameters())
         other_param_optimizer = [p for n, p in other_param_optimizer]
 
         no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
@@ -310,6 +336,7 @@ class SASBERT(nn.Module):
                     'params': other_param_optimizer
                 }
             ],
-            lr=self.opt['lr_sasrec'])
+            lr=self.opt['lr_sasrec']
+        )
 
         return optimizer

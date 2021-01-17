@@ -21,16 +21,15 @@ class Model(nn.Module):
         self.args = args
         # init embedding layer
         if args.embedding_pretrained is not None:
-            embed_tensor = torch.tensor(\
-                np.load(args.embedding)["embeddings"].astype('float32'))
+            embed_tensor = torch.tensor(np.load(args.embedding)["embeddings"].astype('float32'))
             self.embedding = nn.Embedding.from_pretrained(embed_tensor, freeze=False)
         else:
+            # embedding:[vocab_size, embed_size]
             self.embedding = nn.Embedding(args.n_vocab, args.embed, padding_idx=args.n_vocab - 1)
         # define forward layer
-        self.convs = nn.ModuleList(
-            [nn.Conv2d(1, args.num_filters, (k, args.embed)) for k in args.filter_sizes])
+        self.convs = nn.ModuleList([nn.Conv2d(1, args.num_filters, (k, args.embed)) for k in args.filter_sizes])
         self.dropout = nn.Dropout(args.dropout)
-        self.fc = nn.Linear(args.num_filters * len(args.filter_sizes), movie_num)
+        self.fc = nn.Linear(in_features=args.num_filters * len(args.filter_sizes), out_features=movie_num)
 
     def conv_and_pool(self, x, conv):
         x = F.relu(conv(x)).squeeze(3)

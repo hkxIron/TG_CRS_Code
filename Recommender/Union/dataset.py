@@ -14,6 +14,8 @@ import os
 import ipdb
 import random
 
+# 与dataset_p的不同是: Ours并未用到 user_logn_history,conv_long_history数据集
+# 另外多了BERT, SASRec数据集
 
 class CRSdataset(Dataset):
     def __init__(self, logger, subset, filename, args, tokenizer):
@@ -45,8 +47,8 @@ class CRSdataset(Dataset):
             f = pickle.load(open(filename, 'rb'))[:self.args.use_size]
 
         self.load_movie()
-        self.unk_movie_id = len(self.db2id)
-        self.movie_num = len(self.db2id) + 1
+        self.unk_movie_id = len(self.db2index)
+        self.movie_num = len(self.db2index) + 1
 
         logger.info("[Load {} movies(+1)]".format(self.movie_num))
 
@@ -76,18 +78,16 @@ class CRSdataset(Dataset):
             for conv in tqdm(f):
                 # contexts_token = ["[CLS]"]  # list of token, ['[CLS]' UTTER1  "[SEP]"  UTTER2  "[SEP]" ]
                 conv_id = conv['conv_id']
-                contexts_index = [
-                ]  # list of token, ['[CLS]' UTTER1  UTTER2  "[SEP]" Target ]
+                contexts_index = [ ]  # list of token, ['[CLS]' UTTER1  UTTER2  "[SEP]" Target ]
 
                 for message in conv['messages']:
                     message_id, content, role = message['local_id'], message[
                         'content'], message['role']
                     # 如果这一步要推荐电影，就产生一个sample：上文context + 当前要推荐的电影 这个pair
-                    if role == 'Recommender' and message_id in conv[
-                            'mentionMovies']:
+                    if role == 'Recommender' and message_id in conv['mentionMovies']:
                         # 将douban-id映射为global-id
                         movie_id = int(conv['mentionMovies'][message_id][0])
-                        movie_id = self.db2id[movie_id]
+                        movie_id = self.db2index[movie_id]
                         # 获得context对应的两种mask: seg_id, att_mask # 短则补齐，长则切断
                         cur_contexts_index = contexts_index[:-1] + [
                             self.sep_id
@@ -127,14 +127,12 @@ class CRSdataset(Dataset):
                             break
 
                     content_token = tokenizer.tokenize(content)
-                    content_index = tokenizer.convert_tokens_to_ids(
-                        content_token) + [self.sent_split_id]
+                    content_index = tokenizer.convert_tokens_to_ids(content_token) + [self.sent_split_id]
                     contexts_index.extend(content_index)
 
-            # 以上是bert用的，以下是sasrec用的
-
-            conv2user = pickle.load(open('../../data/0619conv2user.pkl',
-                                         'rb'))  # 检验无误
+            # 以上是bert用的，以下是sasrec用的,
+            # 但并未用到 user_logn_history,conv_long_history数据集
+            conv2user = pickle.load(open('../../data/0619conv2user.pkl', 'rb'))  # 检验无误
             id2history = pickle.load(open('../../data/{}_identity2history.pkl'.format(subset), 'rb'))
 
             num_history = 0
@@ -181,13 +179,13 @@ class CRSdataset(Dataset):
                     assert len(input_mask) == self.max_len
                     assert len(sample_negs) == self.max_len
                     if identity in self.both_data:
-                        assert self.db2id[int(
+                        assert self.db2index[int(
                             movieId)] == self.both_data[identity][-1]
                         self.both_data[identity].extend(
                             [input_ids, target_pos, input_mask, sample_negs])
                     else:
                         logger.info(identity, file=empty_conv_ids_file)
-                    conv_movie_list.append(self.db2id[int(movieId)])
+                    conv_movie_list.append(self.db2index[int(movieId)])
 
             # convert both_data to data
             self.data = [sample for identity, sample in self.both_data.items()]
@@ -212,9 +210,10 @@ class CRSdataset(Dataset):
         else:
             f = pickle.load(open(filename, 'rb'))[:self.args.use_size]
 
+        # 先加载电影信息
         self.load_movie()
-        self.unk_movie_id = len(self.db2id)
-        self.movie_num = len(self.db2id) + 1
+        self.unk_movie_id = len(self.db2index)
+        self.movie_num = len(self.db2index) + 1
         logger.info("[Exist {} movies]".format(self.movie_num))
 
         self.tokenizer = tokenizer
@@ -224,21 +223,18 @@ class CRSdataset(Dataset):
         self.unk_id = self.tokenizer.convert_tokens_to_ids('[UNK]')
         self.sent_split_id = self.tokenizer.convert_tokens_to_ids('[unused1]')
         self.word_split = '[unused2]'
-        self.word_split_id = self.tokenizer.convert_tokens_to_ids(
-            self.word_split)
+        self.word_split_id = self.tokenizer.convert_tokens_to_ids(self.word_split)
 
         # define data structs
         self.data = []
-        save_file = 'data/data_{}/{}processed_data.pkl'.format(
-            args.model_type, subset)
+        save_file = 'data/data_{}/{}processed_data.pkl'.format(args.model_type, subset)
         empty_conv_ids_file = open('empty_conv_ids.txt', 'a')
 
         if not raw:
             self.data = pickle.load(open(save_file, 'rb'))
             if use_size != -1:
                 self.data = self.data[:use_size]
-            self.logger.info(
-                f"[Load {len(self.data)} cases, from {save_file}]")
+            self.logger.info(f"[Load {len(self.data)} cases, from {save_file}]")
 
             return
 
@@ -248,17 +244,16 @@ class CRSdataset(Dataset):
             contexts_index = []
 
             for message in conv['messages']:
-                message_id, content, role = message['local_id'], message[
-                    'content'], message['role']
-                if role == 'Recommender' and message_id in conv[
-                        'mentionMovies']:
+                message_id, content, role = message['local_id'], message['content'], message['role']
+                if role == 'Recommender' and message_id in conv['mentionMovies']:
                     # 将douban-id映射为global-id
                     movie_id = int(conv['mentionMovies'][message_id][0])
-                    movie_id = self.db2id[movie_id]
+                    movie_id = self.db2index[movie_id]
                     # 获得context对应的两种mask: seg_id, att_mask # 短则补齐，长则切断
                     cur_contexts_index = contexts_index[:-1] + [self.sep_id]
                     self.max_len_inside = self.max_c_length - 1  # cls
 
+                    # 长度过短,补0
                     if len(cur_contexts_index) < self.max_len_inside:
                         cur_contexts_index = [self.cls_id] + cur_contexts_index
                         cur_contexts_index = cur_contexts_index + [0] * (
@@ -269,18 +264,15 @@ class CRSdataset(Dataset):
                         )  # mask部分 segment置为1
                         masks = [1] * len(cur_contexts_index) + [0] * (
                             self.max_c_length - len(cur_contexts_index))
+                    # 长度过长，截断
                     else:
-                        cur_contexts_index = [
-                            self.cls_id
-                        ] + cur_contexts_index[-self.max_len_inside:]
+                        cur_contexts_index = [ self.cls_id ] + cur_contexts_index[-self.max_len_inside:]
                         types = [0] * len(cur_contexts_index)
                         masks = [1] * len(cur_contexts_index)
 
                     assert len(cur_contexts_index) == self.max_c_length
                     assert cur_contexts_index[0] == self.cls_id
-                    assert cur_contexts_index[
-                        -1] == self.sep_id or cur_contexts_index[
-                            -1] == self.pad_id
+                    assert cur_contexts_index[-1] == self.sep_id or cur_contexts_index[ -1] == self.pad_id
 
                     case = [cur_contexts_index, types, masks, movie_id]
                     self.data.append(case)
@@ -299,9 +291,7 @@ class CRSdataset(Dataset):
             pickle.dump(self.data, open(save_file, 'wb'))
         if use_size != -1:
             self.data = self.data[:use_size]
-        self.logger.info(
-            f"[Load {len(f)} convs, Extract {len(self.data)} cases, from {filename}]"
-        )
+        self.logger.info(f"[Load {len(f)} convs, Extract {len(self.data)} cases, from {filename}]")
         self.logger.info(f"[Save processed data to {save_file}]")
 
     def _init_SASRec(self, logger, subset, filename, args, tokenizer):
@@ -323,8 +313,8 @@ class CRSdataset(Dataset):
             f = pickle.load(open(filename, 'rb'))[:self.args.use_size]
 
         self.load_movie()
-        self.unk_movie_id = len(self.db2id)
-        self.movie_num = len(self.db2id) + 1
+        self.unk_movie_id = len(self.db2index)
+        self.movie_num = len(self.db2index) + 1
         logger.info("[Load {} movies]".format(self.movie_num))
 
         self.tokenizer = tokenizer
@@ -334,12 +324,10 @@ class CRSdataset(Dataset):
         self.unk_id = self.tokenizer.convert_tokens_to_ids('[UNK]')
         self.sent_split_id = self.tokenizer.convert_tokens_to_ids('[unused1]')
         self.word_split = '[unused2]'
-        self.word_split_id = self.tokenizer.convert_tokens_to_ids(
-            self.word_split)
+        self.word_split_id = self.tokenizer.convert_tokens_to_ids(self.word_split)
 
         self.both_data = {}
-        save_file = 'data/data_{}/{}processed_data.pkl'.format(
-            self.args.model_type, subset)
+        save_file = 'data/data_{}/{}processed_data.pkl'.format(self.args.model_type, subset)
         empty_conv_ids_file = open('empty_conv_ids.txt', 'a')
 
         if not raw:
@@ -362,7 +350,7 @@ class CRSdataset(Dataset):
                         'mentionMovies']:
                     # 将douban-id映射为global-id
                     movie_id = int(conv['mentionMovies'][message_id][0])
-                    movie_id = self.db2id[movie_id]
+                    movie_id = self.db2index[movie_id]
                     # 获得context对应的两种mask: seg_id, att_mask # 短则补齐，长则切断
                     cur_contexts_index = contexts_index[:-1] + [self.sep_id]
                     self.max_len_inside = self.max_c_length - 1  # cls
@@ -397,8 +385,7 @@ class CRSdataset(Dataset):
                         break
 
                 content_token = tokenizer.tokenize(content)
-                content_index = tokenizer.convert_tokens_to_ids(
-                    content_token) + [self.sent_split_id]
+                content_index = tokenizer.convert_tokens_to_ids(content_token) + [self.sent_split_id]
                 contexts_index.extend(content_index)
 
         # 以上是bert用的，以下是sasrec用的
@@ -458,13 +445,13 @@ class CRSdataset(Dataset):
                 assert len(input_mask) == self.max_len
                 assert len(sample_negs) == self.max_len
                 if identity in self.both_data:
-                    assert self.db2id[int(
+                    assert self.db2index[int(
                         movieId)] + 1 == self.both_data[identity][-1]
                     self.both_data[identity].extend(
                         [input_ids, target_pos, input_mask, sample_negs])
                 else:
                     logger.info(identity, file=empty_conv_ids_file)
-                conv_movie_list.append(self.db2id[int(movieId)])
+                conv_movie_list.append(self.db2index[int(movieId)])
 
         # convert both_data to data
         self.data = [sample for identity, sample in self.both_data.items()]
@@ -479,17 +466,18 @@ class CRSdataset(Dataset):
         )
         empty_conv_ids_file.close()
 
+    # 先加载电影信息
     def load_movie(self, path='../../data/movies_with_mentions.csv'):
         import csv
         self.name2id = {}
-        self.db2id = {}
+        self.db2index = {}
         reader = csv.reader(open(path, 'r', encoding='utf-8-sig'))
         next(reader)
         for line in reader:
             global_id, name_time, db_id, _ = line
             name = name_time.split('(')[0]
             self.name2id[name] = int(global_id)
-            self.db2id[int(db_id)] = int(global_id)
+            self.db2index[int(db_id)] = int(global_id)
 
     def neg_sample(self, item_set):
         item = random.randint(1, self.movie_num)

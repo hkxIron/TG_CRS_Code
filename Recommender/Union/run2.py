@@ -312,15 +312,13 @@ class TrainLoop_Ours():
             # print("[Movie]", batch_data[3])
             # ipdb.set_trace()
 
-            with torch.no_grad():
+            with torch.no_grad(): # 不需要反向传播梯度
                 batch_data = [data.to(self.device) for data in batch_data]
                 logit = self.model(batch_data) # 前向推断
 
                 y = batch_data[3] # Movie
                 loss = self.model.compute_loss(logit, y)
-
                 self.compute_metircs(logit, y, metrics_test)
-
                 losses.append(loss.item())
         # test 结束
         metrics_test['Loss'] = sum(losses) / len(losses)
@@ -328,8 +326,7 @@ class TrainLoop_Ours():
         for key in metrics_test:
             if 'NDCG' in key or 'MRR' in key:
                 # metrics_test[key] = round(metrics_test[key] / metrics_test['count'] * 3, 4)
-                metrics_test[key] = round(
-                    metrics_test[key] / metrics_test['count'], 4)
+                metrics_test[key] = round(metrics_test[key] / metrics_test['count'], 4)
 
         logger.info(f"{subset} set's metrics = {metrics_test}")
 
@@ -447,10 +444,11 @@ class TrainLoop_SASRec():
         self.args.device = self.device
 
         self.build_data()
-        # bs, item_num+1: [gt, all_item_id]
-        self.default_neg_sampled = torch.tensor(
-            [0] + [i for i in range(1, self.args.item_size)],
-            dtype=torch.long).repeat(self.args.batch_size, 1).to(self.device)
+        # default_neg_sampled:[batch_size, item_num+1]: [gt, all_item_id]
+        self.default_neg_sampled = torch.tensor([0] + [i for i in range(1, self.args.item_size)],
+            dtype=torch.long)\
+            .repeat(self.args.batch_size, 1)\
+            .to(self.device)
 
         self.build_model()
         self.init_optim()
@@ -492,27 +490,35 @@ class TrainLoop_SASRec():
         for i in range(self.epoch):
             train_loss = []
             # for batch_idx, batch_data in tqdm(enumerate(self.rec_train_dataloader)):
-            for batch_idx, batch_data in enumerate(
-                    self.dataset_loader['train']):
+            for batch_idx, batch_data in enumerate(self.dataset_loader['train']):
                 self.model.train()
                 self.zero_grad()
                 batch_data = [data.to(self.device) for data in batch_data]
 
-                input_ids, target_pos, input_mask, sample_negs = batch_data[
-                    -4:]
+                input_ids, target_pos, input_mask, sample_negs = batch_data[-4:]
                 # print(input_ids)
                 # print(target_pos)
 
-                sequence_output = self.model(input_ids, input_mask,
+                # input_ids: [batch_size, seq_len]
+                # input_mask:[batch_size, seq_len]
+                # sequence_output:[batch_size, seq_len, hidden_size]
+                sequence_output = self.model(input_ids,
+                                             input_mask,
                                              self.args.use_cuda)
 
-                loss = self.model.cross_entropy(sequence_output, target_pos,
-                                                sample_negs, self.use_cuda)
+                # sequence_output:[batch_size, seq_len, hidden_size]
+                # pos_ids:[batch, seq_len]
+                # neg_ids:[batch, seq_len]
+                # loss:[batch*seq_len, 1]
+                loss = self.model.cross_entropy(sequence_output,
+                                                pos_ids=target_pos,
+                                                neg_ids=sample_negs,
+                                                use_cuda=self.use_cuda)
 
                 train_loss.append(loss.item())
                 losses.append(loss.item())
 
-                loss.backward()
+                loss.backward() # loss反向传播
                 self.optimizer.step()
 
                 if (batch_idx + 1) % 1000000000000000 == 0:
@@ -526,7 +532,6 @@ class TrainLoop_SASRec():
             # metrics_test = self.val('train')
             metrics_test = self.val('valid')
             _ = self.val('test')
-            # False是什么鬼
             if best_val_NDCG > metrics_test["NDCG50"]:
                 patience += 1
                 logger.info(f"[Patience = {patience}]")
@@ -566,15 +571,22 @@ class TrainLoop_SASRec():
                 # print(target_pos)
                 # print(predict_ids)
 
-                # bs, max_len, hidden_size2
-                sequence_output = self.model(input_ids, input_mask,
+                # sequence_output:[batch_size, seq_len, hidden_size]
+                sequence_output = self.model(input_ids,
+                                             input_mask,
                                              self.args.use_cuda)
 
-                loss = self.model.cross_entropy(sequence_output, target_pos,
-                                                sample_negs, self.use_cuda)
-                # bs, item_num
+                # loss:[batch*seq_len, 1]
+                loss = self.model.cross_entropy(sequence_output,
+                                                target_pos,
+                                                sample_negs,
+                                                self.use_cuda)
+                # [batch_size, item_num]
                 for i in range(predict_ids.shape[0]):
                     self.default_neg_sampled[i][0] = predict_ids[i]
+                # seq_out: [batch, seq_len, hidden]
+                # test_neg_sample: [batch, item_num]
+                # test_logits: [batch, item_num]
                 # 推荐的结果
                 test_logits = self.predict(
                     sequence_output,
@@ -584,6 +596,7 @@ class TrainLoop_SASRec():
                 self.compute_metircs(test_logits, metrics_test)
 
                 losses.append(loss.item())
+
         # test 结束
         metrics_test['Loss'] = sum(losses) / len(losses)
 
@@ -596,16 +609,22 @@ class TrainLoop_SASRec():
 
         return metrics_test
 
+    # seq_out: [batch, seq_len, hidden]
+    # test_neg_sample: [batch, item_num]
+    # test_logits: [batch, item_num]
     def predict(self, seq_out, test_neg_sample, use_cuda=True):
-        # shorten: 只要每个batch最后一个item的representation与所有candidate rep的点击
-        # [batch item_num hidden_size]
+        # shorten: 只要每个batch最后一个item的representation与所有candidate representation的点击
+        # test_item_emb: [batch, item_num, hidden_size]
         test_item_emb = self.model.embeddings.item_embeddings(test_neg_sample)
-        # [batch 1 hidden]
-        seq_out = seq_out[:, -1, :].unsqueeze(1)
-        # [batch 1 item_num]
+        # seq_out:[batch, seq_len, hidden]
+        #      => [batch,1,hidden]
+        seq_out = seq_out[:, -1, :].unsqueeze(1) # batch 中的最后一个item
+        # seq_out: [batch, 1, hidden]
+        # test_item_emb: [batch, item_num, hidden_size]
+        # test_logits:[batch, 1, item_num]
         test_logits = torch.matmul(seq_out, test_item_emb.transpose(1, 2))
         # print(test_logits.shape) #p
-        # [batch item_num]
+        # test_logits: [batch, item_num], 即可计算出每个batch最后一个item与所有candidate item的内积分数
         test_logits = test_logits[:, -1, :]
 
         return test_logits
@@ -626,6 +645,7 @@ class TrainLoop_SASRec():
 
         metrics['count'] += 1
 
+    # test_logits: [batch, item_num]
     def get_metric(self, test_logits, topk=10):
         NDCG = 0.0
         MRR = 0.0
@@ -760,8 +780,7 @@ class TrainLoop_BERT():
 
         for i in range(self.epoch):
             train_loss = []
-            for batch_idx, batch_data in tqdm(
-                    enumerate(self.dataset_loader['train'])):
+            for batch_idx, batch_data in tqdm(enumerate(self.dataset_loader['train'])):
                 self.model.train()
                 self.zero_grad()
 
@@ -773,9 +792,13 @@ class TrainLoop_BERT():
                 # logger.info("[GT] ", y)
                 # ipdb.set_trace()
 
+                # logit: [batch_size, num_class]
                 logit = self.model([contexts, types, masks], raw_return=False)
                 # logger.info(logit[y])
 
+                # logit: [batch_size, num_class]
+                # y:[batch_size]
+                # loss:[batch_size]
                 loss = self.model.compute_loss(logit, y, 'train')
                 train_loss.append(loss.item())
                 losses.append(loss.item())
@@ -784,15 +807,13 @@ class TrainLoop_BERT():
                 self.optimizer.step()
 
                 # logger.info('loss = ', loss)
-
                 if (batch_idx + 1) % 50 == 0:
                     # 从上次预报到现在为止的loss均值，每50个batch预报一次
                     loss = sum(losses) / len(losses)
                     logger.info('loss is %.4f' % (loss))
                     losses = []
 
-            logger.info(
-                f'Epoch {i}, train loss = {sum(train_loss)/len(train_loss)}')
+            logger.info(f'Epoch {i}, train loss = {sum(train_loss)/len(train_loss)}')
 
             # metrics_test = self.val('train')
             metrics_test = self.val('valid')
@@ -831,10 +852,13 @@ class TrainLoop_BERT():
         losses = []
         for batch_idx, batch_data in enumerate(val_dataset_loader):
             with torch.no_grad():
-                contexts, types, masks, y, _, _, _, _ = (data.to(
-                    self.device) for data in batch_data)
+                contexts, types, masks, y, _, _, _, _ = (data.to(self.device) for data in batch_data)
+                # logit: [batch_size, num_class]
                 logit = self.model([contexts, types, masks], raw_return=False)
                 # ipdb.set_trace()
+                # logit: [batch_size, num_class]
+                # y: [batch_size]
+                # loss:[batch_size]
                 loss = self.model.compute_loss(logit, y)
 
                 self.compute_metircs(logit, y, metrics_test)
@@ -844,18 +868,16 @@ class TrainLoop_BERT():
 
         for key in metrics_test:
             if 'NDCG' in key or 'MRR' in key:
-                metrics_test[key] = round(
-                    metrics_test[key] / metrics_test['count'], 4)
+                metrics_test[key] = round(metrics_test[key] / metrics_test['count'], 4)
 
         logger.info(f"{subset} set's metrics = {metrics_test}")
-
         return metrics_test
 
     def compute_metircs(self, logit, y, metrics):
         for K in [1, 10, 50]:
             # pred = logit.max(-1, keepdim=True)[1]
             # acc += pred.eq(y.view_as(pred)).sum().item()    # 记得加item()
-            pred, pred_id = torch.topk(logit, K, dim=1)  # id=[bs, K]
+            pred, pred_id = torch.topk(logit, K, dim=1)  # id=[batch_size, K]
             for i, gt in enumerate(y):
                 gt = gt.item()
                 cand_ids = pred_id[i].tolist()
@@ -959,22 +981,16 @@ def main():
         args.model_save_path = args.model_save_path.format(args.exp_name)
         if not os.path.exists(args.model_save_path):
             os.mkdir(args.model_save_path)
-        args.fusion_save_path = join(
-            args.model_save_path, args.fusion_save_path.format(args.exp_name))
-        args.sasrec_save_path = join(
-            args.model_save_path, args.sasrec_save_path.format(args.exp_name))
+        args.fusion_save_path = join(args.model_save_path, args.fusion_save_path.format(args.exp_name))
+        args.sasrec_save_path = join(args.model_save_path, args.sasrec_save_path.format(args.exp_name))
 
     if args.load_model:
         args.model_load_path = args.model_load_path.format(args.load_exp_name)
         if not os.path.exists(args.model_load_path):
             logger.info('!No existing load exp dictionary')
             exit(0)
-        args.fusion_load_path = join(
-            args.model_load_path,
-            args.fusion_load_path.format(args.load_exp_name))
-        args.sasrec_load_path = join(
-            args.model_load_path,
-            args.sasrec_load_path.format(args.load_exp_name))
+        args.fusion_load_path = join(args.model_load_path, args.fusion_load_path.format(args.load_exp_name))
+        args.sasrec_load_path = join(args.model_load_path, args.sasrec_load_path.format(args.load_exp_name))
 
     set_seed(args)
 
@@ -991,7 +1007,6 @@ def main():
             loop.save_embed()
     else:
         loop.train()
-
 
 if __name__ == '__main__':
     main()
