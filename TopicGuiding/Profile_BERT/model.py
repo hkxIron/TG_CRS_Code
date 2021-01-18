@@ -26,7 +26,7 @@ class IntentionClassifier(nn.Module):
 
     def forward(self, profile_pooled, bs, sent_num, word_num):
         profile_pooled = profile_pooled.view(bs, sent_num, -1)
-        # (bs, hidden)
+        # (batch_size, hidden)
         profile_pooled = torch.mean(profile_pooled, dim=1)
 
         out_topic_id = self.state2topic_id(profile_pooled)
@@ -81,7 +81,7 @@ class Model(nn.Module):
         bs, sent_num, word_num = user_profile.shape
         user_profile = user_profile.view(-1, user_profile.shape[-1])
         profile_mask = profile_mask.view(-1, profile_mask.shape[-1])
-        # (bs, word_num, hidden)
+        # (batch_size, word_num, hidden)
         profile_last_hidden_state, profile_pooled = self.profile_bert(
             user_profile, profile_mask)
 

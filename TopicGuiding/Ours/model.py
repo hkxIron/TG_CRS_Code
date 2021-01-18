@@ -17,23 +17,23 @@ from torch.utils.data import *
 import ipdb
 import math
 
-
+# 意图分类模型
 class IntentionClassifier(nn.Module):
     def __init__(self, args, bert_embed_size=768):
         super(IntentionClassifier, self).__init__()
         self.args = args
-        self.state2topic_id = nn.Linear(bert_embed_size * 3,
-                                        args.topic_class_num)
+        self.full_connection = nn.Linear(in_features=bert_embed_size * 3,
+                                         out_features=args.topic_class_num)
 
-    def forward(self, context_rep, tp_rep, profile_pooled, bs, sent_num,
-                word_num):
-        profile_pooled = profile_pooled.view(bs, sent_num, -1)
-        # (bs, hidden)
+    def forward(self, context_rep, topic_rep, profile_pooled, batch_size, sent_num, word_num):
+        # profile_pooled:[batch_size, sent_num, hidden]
+        profile_pooled = profile_pooled.view(batch_size, sent_num, -1)
+        # profile_pooled:[batch_size, hidden]
         profile_pooled = torch.mean(profile_pooled, dim=1)
-        # [bs, hidden_size*3]
-        state_rep = torch.cat((context_rep, tp_rep, profile_pooled), 1)
-
-        out_topic_id = self.state2topic_id(state_rep)
+        # state_rep:[batch_size, hidden_size*3]
+        state_rep = torch.cat((context_rep, topic_rep, profile_pooled), dim=1)
+        # out_topic_id:[batch_size, topic_class_num]
+        out_topic_id = self.full_connection(state_rep)
 
         return out_topic_id
 
@@ -41,8 +41,7 @@ class IntentionClassifier(nn.Module):
         torch.save(self.state_dict(), save_path)
 
     def load_model(self, load_path):
-        self.load_state_dict(
-            torch.load(load_path, map_location=self.args.device))
+        self.load_state_dict(torch.load(load_path, map_location=self.args.device))
 
 
 class Model(nn.Module):
@@ -60,12 +59,9 @@ class Model(nn.Module):
             bert_path2 = bert_path2 + '/2'
             bert_path3 = bert_path3 + '/3'
 
-        self.context_bert = BertModel.from_pretrained(
-            bert_path1)  # /bert_pretrain/
-        self.topic_bert = BertModel.from_pretrained(
-            bert_path2)  # /bert_pretrain/
-        self.profile_bert = BertModel.from_pretrained(
-            bert_path3)  # /bert_pretrain/
+        self.context_bert = BertModel.from_pretrained(bert_path1)  # /bert_pretrain/
+        self.topic_bert = BertModel.from_pretrained(bert_path2)  # /bert_pretrain/
+        self.profile_bert = BertModel.from_pretrained(bert_path3)  # /bert_pretrain/
 
         # to check
         for model in [self.context_bert, self.topic_bert, self.profile_bert]:
@@ -74,8 +70,8 @@ class Model(nn.Module):
                 param.requires_grad = True  # 每个参数都要 求梯度
 
         ## define IntentionClassifier
-        self.intention_classifier = IntentionClassifier(
-            self.args, bert_embed_size)
+
+        self.intention_classifier = IntentionClassifier(self.args, bert_embed_size)
         # init if need, save and load both in bert1_path
         self.addition_save_name = 'addition_model.pth'
         if args.init_add:
@@ -94,31 +90,32 @@ class Model(nn.Module):
             os.mkdir(self.save_path3)
 
     def forward(self, x):
-        context, context_mask, topic_path_kw, tp_mask, user_profile, profile_mask = x
-        # [bs, seq_len, hidden_size]， [bs, hidden_size]
-        context_last_hidden_state, context_topic = self.context_bert(
-            context, context_mask)
+        context, context_mask, topic_path_kw, topic_mask, user_profile, profile_mask = x
+        # context_last_hidden_state:[batch_size, seq_len, hidden_size]，
+        # context_topic: [batch_size, hidden_size]
+        context_last_hidden_state, context_topic = self.context_bert(context, context_mask)
 
-        # [bs, hidden_size],topic_pooled = (bs, hiddensize)
-        tp_last_hidden_state, topic_pooled = self.topic_bert(
-            topic_path_kw, tp_mask)
+        # topic_last_hidden_state: [batch_size, seq_len, hidden_size]
+        # topic_pooled : [batch_size, hidden_size]
+        topic_last_hidden_state, topic_pooled = self.topic_bert(topic_path_kw, topic_mask)
 
-        bs, sent_num, word_num = user_profile.shape
+        batch_size, sent_num, word_num = user_profile.shape
         user_profile = user_profile.view(-1, user_profile.shape[-1])
         profile_mask = profile_mask.view(-1, profile_mask.shape[-1])
 
-        # (bs, word_num, hidden)
-        profile_last_hidden_state, profile_pooled = self.profile_bert(
-            user_profile, profile_mask)
+        # profile_last_hidden_state: [batch_size, word_num, hidden]
+        # profile_pooled: [batch_size, hidden_size]
+        profile_last_hidden_state, profile_pooled = self.profile_bert(user_profile, profile_mask)
 
+        # out_topic_id:[batch_size, topic_class_num]
         out_topic_id = self.intention_classifier(context_topic, topic_pooled,
-                                                 profile_pooled, bs, sent_num,
+                                                 profile_pooled, batch_size, sent_num,
                                                  word_num)
 
         return out_topic_id
 
     def compute_loss(self, output, y_topic_id):
-
+        # output:[batch_size, topic_class_num]
         loss_topic_id = F.cross_entropy(output, y_topic_id)
         return loss_topic_id
 
@@ -128,8 +125,7 @@ class Model(nn.Module):
         self.topic_bert.save_pretrained(self.save_path2)
         self.profile_bert.save_pretrained(self.save_path3)
 
-        self.intention_classifier.save_model(
-            join(self.save_path1, self.addition_save_name))
+        self.intention_classifier.save_model(join(self.save_path1, self.addition_save_name))
 
     def load_addition_params(self, path):
         self.intention_classifier.load_model(path)

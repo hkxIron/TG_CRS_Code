@@ -27,26 +27,41 @@ class Model(nn.Module):
             # embedding:[vocab_size, embed_size]
             self.embedding = nn.Embedding(args.n_vocab, args.embed, padding_idx=args.n_vocab - 1)
         # define forward layer
-        self.convs = nn.ModuleList([nn.Conv2d(1, args.num_filters, (k, args.embed)) for k in args.filter_sizes])
+        # kernel_size:[filter_height, filter_width=embed_size]
+        self.convs = nn.ModuleList([nn.Conv2d(in_channels=1, out_channels=args.num_filters, kernel_size=(k, args.embed)) for k in args.filter_sizes])
         self.dropout = nn.Dropout(args.dropout)
-        self.fc = nn.Linear(in_features=args.num_filters * len(args.filter_sizes), out_features=movie_num)
+        self.full_connection = nn.Linear(in_features=args.num_filters * len(args.filter_sizes), out_features=movie_num)
 
-    def conv_and_pool(self, x, conv):
-        x = F.relu(conv(x)).squeeze(3)
-        x = F.max_pool1d(x, x.size(2)).squeeze(2)
+    def conv_and_pool(self, x, conv_kernel):
+        # x: [batch, 1, max_seq_len, embed_size],
+        # conv_kernel:[in_channels=1, out_channels=num_filters, filter_height, filter_width=embed_size]
+        # x=> [batch, num_filters, max_seq_len-filter_height+1, 1]
+        #     [batch, num_filters, max_seq_len-filter_height+1]
+        x = F.relu(conv_kernel(x)).squeeze(3)
+        # x => [batch, num_filters, max_seq_len-filter_height+1]
+        #  =>  [batch, num_filters, 1]
+        #  =>  [batch, num_filters]
+        x = F.max_pool1d(input=x, kernel_size=x.size(2)).squeeze(2)
         return x
 
     def forward(self, x):
         # check input and output
+        # out:[batch, max_seq_len=50, embed_size]
         out = self.embedding(x[0])
+        # out:[batch, 1, max_seq_len=50, embed_size]
         out = out.unsqueeze(1)
-        out = torch.cat([self.conv_and_pool(out, conv) for conv in self.convs], 1)
+        # out => [batch, num_filters]
+        out = torch.cat([self.conv_and_pool(out, conv) for conv in self.convs], dim=1)
         out = self.dropout(out)
-        out = self.fc(out)
+        # out => [batch, num_filters]
+        #     => [batch, movie_num]
+        out = self.full_connection(out)
         # print(out.shape)  #torch.Size([64, 33834])
         return out
 
     def compute_loss(self, y_pred, y, subset='test'):
+        # y_pred:[batch, movie_num]
+        # y:[batch, 1]
         loss = F.cross_entropy(y_pred, y.squeeze())
 
         return loss

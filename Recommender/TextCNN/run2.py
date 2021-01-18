@@ -216,8 +216,7 @@ class TrainLoop():
             epoch = self.args.base_epoch + epoch
             train_loss = []
             # print('Epoch [{}/{}]'.format(epoch + 1, self.args.epoch))
-            for batch_idx, batch_data in enumerate(
-                    self.dataset_loader['train']):
+            for batch_idx, batch_data in enumerate(self.dataset_loader['train']):
                 ####################################### 检验输入输出ok
                 # print("[Context] ", batch_data[0])
                 # print("[Context] ", '\n'.join(self.vector2sentence(batch_data[0])))
@@ -304,7 +303,7 @@ class TrainLoop():
         for K in [1, 10, 50]:
             pred = logit.max(-1, keepdim=True)[1]
             # acc += pred.eq(y.view_as(pred)).sum().item()    # 记得加item()
-            pred, pred_id = torch.topk(logit, K, dim=1)  # id=[bs, K]
+            pred, pred_id = torch.topk(logit, K, dim=1)  # id=[batch_size, K]
             for i, gt in enumerate(y.squeeze()):
                 gt = gt.item()
                 cand_ids = pred_id[i].tolist()

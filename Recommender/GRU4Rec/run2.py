@@ -15,8 +15,8 @@ Examples
 .. code-block:: shell
 
   python -m parlai.scripts.train -m ir_baseline -t dialog_babi:Task:1 -mf /tmp/model
-  python -m parlai.scripts.train -m seq2seq -t babi:Task10k:1 -mf '/tmp/model' -bs 32 -lr 0.5 -hs 128
-  python -m parlai.scripts.train -m drqa -t babi:Task10k:1 -mf /tmp/model -bs 10
+  python -m parlai.scripts.train -m seq2seq -t babi:Task10k:1 -mf '/tmp/model' -batch_size 32 -lr 0.5 -hs 128
+  python -m parlai.scripts.train -m drqa -t babi:Task10k:1 -mf /tmp/model -batch_size 10
 
 """  # noqa: E501
 
@@ -168,7 +168,7 @@ class TrainLoop_GRU():
 
         self.build_data()
 
-        # bs, item_num+1: [gt, all_item_id]
+        # batch_size, item_num+1: [gt, all_item_id]
         self.default_neg_sampled = torch.tensor(
             [0] + [i for i in range(1, self.args.item_size)], dtype=torch.long).repeat(
                 self.args.batch_size, 1).to(self.device)         
@@ -216,8 +216,8 @@ class TrainLoop_GRU():
                 batch_data  = [data.to(self.device) for data in batch_data]
 
                 gt, input_ids, target_pos, input_mask, sample_negs, len_input = batch_data[-6:]
-                # print(input_ids) # bs, seq_len
-                # print(target_pos) # bs, seq_len
+                # print(input_ids) # batch_size, seq_len
+                # print(target_pos) # batch_size, seq_len
                 # print(gt)
                 # print(len_input)
                 # len_ = []
@@ -284,7 +284,7 @@ class TrainLoop_GRU():
 
                 # loss = self.model.cross_entropy(sequence_output, target_pos, sample_negs, input_mask)
                 
-                # bs, item_num
+                # batch_size, item_num
                 for i in range(predict_ids.shape[0]):
                     self.default_neg_sampled[i][0] = predict_ids[i]
                 # 推荐的结果
@@ -308,7 +308,7 @@ class TrainLoop_GRU():
 
     def predict(self, hidden, attr_ids, test_neg_sample, cuda_condition=True):
         # shorten: 只要每个batch最后一个item的representation与所有candidate rep的点击
-        # hidden=(bs, hidden)
+        # hidden=(batch_size, hidden)
 
         test_item_emb = self.model.item_embeddings(test_neg_sample)
         # [batch 1 hidden]

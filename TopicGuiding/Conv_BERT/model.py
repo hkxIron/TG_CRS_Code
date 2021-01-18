@@ -82,13 +82,13 @@ class Model(nn.Module):
 
     def forward(self, x):
         context, context_mask, topic_path_kw, tp_mask, user_profile, profile_mask = x
-        # [bs, seq_len, hidden_size]， [bs, hidden_size]
+        # [batch_size, seq_len, hidden_size]， [batch_size, hidden_size]
         context_last_hidden_state, context_topic = self.context_bert(
             context, context_mask)
 
         out_topic_id = self.intention_classifier(context_topic)
 
-        # (bs, num_topic+1) (bs, 2) (bs, 2)
+        # (batch_size, num_topic+1) (batch_size, 2) (batch_size, 2)
         return out_topic_id
 
     def compute_loss(self, output, y_topic_id, subset='test'):

@@ -100,7 +100,7 @@ class CRSdataset(Dataset):
                             contexts_index.append(vocab.get(token, vocab.get(UNK)))
                         # 将douban-id映射为global-id
                         movie_id = int(conv['mentionMovies'][message_id][0])
-                        movie_id = self.db2id[movie_id]
+                        movie_id = self.db2index[movie_id]
                         # 短则补齐，长则切断
                         if len(contexts_index) < self.max_c_length:
                             context_len = len(contexts_index)
@@ -129,7 +129,7 @@ class CRSdataset(Dataset):
         # 获得
         import csv
         self.name2id = {}
-        self.db2id = {}
+        self.db2index = {}
         self.movie_num = 0
         reader = csv.reader(open(path, 'r', encoding='utf-8-sig'))
         next(reader)
@@ -137,8 +137,8 @@ class CRSdataset(Dataset):
             global_id, name_time, db_id, _ = line
             name = name_time.split('(')[0]
             self.name2id[name] = int(global_id)
-            self.db2id[int(db_id)] = int(global_id)
-        self.movie_num = len(self.db2id)
+            self.db2index[int(db_id)] = int(global_id)
+        self.movie_num = len(self.db2index)
         ###############################
         # self.movie_num = 2
 

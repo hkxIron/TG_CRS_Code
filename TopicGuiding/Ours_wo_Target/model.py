@@ -29,9 +29,9 @@ class IntentionClassifier(nn.Module):
     def forward(self, context_rep, tp_rep, profile_pooled, bs, sent_num,
                 word_num):
         profile_pooled = profile_pooled.view(bs, sent_num, -1)
-        # (bs, hidden)
+        # (batch_size, hidden)
         profile_pooled = torch.mean(profile_pooled, dim=1)
-        # [bs, hidden_size*3]
+        # [batch_size, hidden_size*3]
         state_rep = torch.cat((context_rep, tp_rep, profile_pooled), 1)
 
         out_topic_id = self.state2topic_id(state_rep)
@@ -93,19 +93,19 @@ class Model(nn.Module):
 
     def forward(self, x):
         context, context_mask, topic_path_kw, topic_path_attitude, tp_mask, user_profile, profile_mask = x
-        # [bs, seq_len, hidden_size]， [bs, hidden_size]
+        # [batch_size, seq_len, hidden_size]， [batch_size, hidden_size]
         context_last_hidden_state, context_topic = self.context_bert(
             context, context_mask)
-        # [bs, hidden_size]
+        # [batch_size, hidden_size]
 
-        # topic_pooled = (bs, hiddensize)
+        # topic_pooled = (batch_size, hiddensize)
         tp_last_hidden_state, topic_pooled = self.topic_bert(
             topic_path_kw, tp_mask)
 
         bs, sent_num, word_num = user_profile.shape
         user_profile = user_profile.view(-1, user_profile.shape[-1])
         profile_mask = profile_mask.view(-1, profile_mask.shape[-1])
-        # (bs, word_num, hidden)
+        # (batch_size, word_num, hidden)
         profile_last_hidden_state, profile_pooled = self.profile_bert(
             user_profile, profile_mask)
 

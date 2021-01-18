@@ -33,11 +33,11 @@ class GRU4REC(nn.Module):
         self.batch_size = args.batch_size
         self.use_cuda = args.use_cuda
         self.device = args.device
-        self.h2o = nn.Linear(args.hidden_size, args.output_size)
+        self.h2o = nn.Linear(in_features=args.hidden_size, out_features=args.output_size)
         self.create_final_activation(args.final_act)
         self.item_embeddings = nn.Embedding(args.item_size, self.embedding_dim)
         self.item_embeddings.load_state_dict(torch.load(args.sasrec_emb_path, map_location=self.args.device))
-        self.gru = nn.GRU(self.embedding_dim, self.hidden_size, self.num_layers, dropout=self.dropout_hidden, batch_first = True)
+        self.gru = nn.GRU(input_size=self.embedding_dim, hidden_size=self.hidden_size, num_layers=self.num_layers, dropout=self.dropout_hidden, batch_first = True)
         # if self.embedding_dim != -1:
         #     self.look_up = nn.Embedding(input_size, self.embedding_dim)
         #     self.gru = nn.GRU(self.embedding_dim, self.hidden_size, self.num_layers, dropout=self.dropout_hidden)
@@ -71,25 +71,25 @@ class GRU4REC(nn.Module):
         '''
 
         # if self.embedding_dim == -1:
-        #     # bs, item_size
+        #     # batch_size, item_size
         #     embedded = self.onehot_encode(input)
         #     if self.training and self.dropout_input > 0: embedded = self.embedding_dropout(embedded)
-        #     # 1, bs, item_size?
+        #     # 1, batch_size, item_size?
         #     embedded = embedded.unsqueeze(0)
         # else:
         #     embedded = input.unsqueeze(0)
         #     embedded = self.look_up(embedded)
         # print(input.shape)
-        # input: bs， seq_len,  
+        # input: [batch_size,seq_len]
+        # embed: [batch, seq_len, hidden_size]
         embedded = self.item_embeddings(input)
         # print(embedded.shape)
         # (batch, seq_len, hidden_size):
-        # (num_layers , batch, hidden_size)
-        embedded = pack_padded_sequence(embedded, len_input, enforce_sorted=False, batch_first=True)
+        embedded = pack_padded_sequence(input=embedded, lengths=len_input, enforce_sorted=False, batch_first=True)
         # print(embedded.data.shape)
 
-        output, hidden = self.gru(embedded, hidden) 
-        output, output_len = pad_packed_sequence(output,batch_first=True)
+        output, hidden = self.gru(input=embedded, hx=hidden) # pytorch中，将上一时间段的的hidden state传过来
+        output, output_len = pad_packed_sequence(output, batch_first=True) # 与pack_padded_sequence相反
         # print(output.shape) # 以最长的序列的长度为最长
         # print(output_len)
         # output = output.view(-1, output.size(-1))  #(B,H)
@@ -99,11 +99,12 @@ class GRU4REC(nn.Module):
         # output = self.final_activation(self.h2o(output))
         logit = output.view(batch, seq_len,  hidden_size)
 
-        # (bs, output_size) #(num_layer, B, H)
+        # (batch_size, output_size) #(num_layer, B, H)
         return logit, hidden[-1], max([len_ for len_ in output_len])
 
     def embedding_dropout(self, input):
         p_drop = torch.Tensor(input.size(0), 1).fill_(1 - self.dropout_input)
+        # expand_as:将tensor的shape弄成与输入的一样
         mask = torch.bernoulli(p_drop).expand_as(input) / (1 - self.dropout_input)
         mask = mask.to(self.device)
         input = input * mask

@@ -1,8 +1,8 @@
 from models.transformer import TorchGeneratorModel, _build_encoder, _build_decoder, _build_encoder_mask, _build_encoder4kg, _build_decoder4kg
 from models.utils import _create_embeddings, _create_entity_embeddings
 from models.graph import SelfAttentionLayer, SelfAttentionLayer_batch
-# from torch_geometric.nn.conv.rgcn_conv import RGCNConv
-# from torch_geometric.nn.conv.gcn_conv import GCNConv
+# from torch_geometric.nn.conv_kernel.rgcn_conv import RGCNConv
+# from torch_geometric.nn.conv_kernel.gcn_conv import GCNConv
 import pickle as pkl
 import torch
 import torch.nn as nn
@@ -189,7 +189,7 @@ class TransformerModel(nn.Module):
         )  # 表示取变量input在第dimension维上，从索引start到start+length范围（不包括start+length）的值。
         # 添加start-token-id
         inputs = torch.cat([self._starts(bsz), inputs], 1).to(self.opt['device'])
-        # [bs, r_len, hidden_size]
+        # [batch_size, r_len, hidden_size]
         # latent, _ = self.decoder(inputs, encoder_states, encoder_states_kg, encoder_states_db) #batch*r_l*hidden
         latent, _ = self.decoder(inputs, encoder_states)  #batch*r_l*hidden
 

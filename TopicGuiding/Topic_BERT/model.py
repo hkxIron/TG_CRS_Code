@@ -83,18 +83,18 @@ class Model(nn.Module):
 
     def forward(self, x):
         context, context_mask, topic_path_kw, tp_mask, user_profile, profile_mask = x
-        # [bs, seq_len, hidden_size]， [bs, hidden_size]
+        # [batch_size, seq_len, hidden_size]， [batch_size, hidden_size]
 
         tp_last_hidden_state, topic_pooled = self.topic_bert(
             topic_path_kw, tp_mask)
 
         out_topic_id = self.intention_classifier(topic_pooled)
 
-        # (bs, num_topic+1) (bs, 2) (bs, 2)
+        # (batch_size, num_topic+1) (batch_size, 2) (batch_size, 2)
         return out_topic_id
 
     def compute_loss(self, output, y_topic_id):
-        # (bs, 2) (bs, 2) (bs, 2) (bs, num_topic+1)
+        # (batch_size, 2) (batch_size, 2) (batch_size, 2) (batch_size, num_topic+1)
         out_topic_id = output
         loss_topic_id = F.cross_entropy(out_topic_id, y_topic_id)
         return loss_topic_id

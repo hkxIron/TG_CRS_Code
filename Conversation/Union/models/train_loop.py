@@ -635,7 +635,7 @@ class TrainLoop_Ours(TrainLoop_GPT2):
                     if self.args.save_samples_path:
                         samples_file.write(f"[GroundTruth]: {content}\n")
                     # 组织使用到的对话历史数据
-                    # goal_path = conv['goal_path']
+                    # goal_path = conv_kernel['goal_path']
                     # goals = goal_path[message_id]
                     kw = ''
                     if identity in identity2topicId:

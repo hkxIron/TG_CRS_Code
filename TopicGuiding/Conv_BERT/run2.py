@@ -264,7 +264,7 @@ class TrainLoop():
 
         logit = out_topic_id
         y = y_topic_id
-        pred, pred_id = torch.topk(logit, 1, dim=1)  # id=[bs, K]
+        pred, pred_id = torch.topk(logit, 1, dim=1)  # id=[batch_size, K]
         # ipdb.set_trace()
         for i, gt in enumerate(y):
             gt = gt.item()
@@ -273,14 +273,14 @@ class TrainLoop():
                 metrics['TopicId_Hits@1'] += 1
             metrics['count'] += 1
 
-        pred, pred_id = torch.topk(logit, 3, dim=1)  # id=[bs, K]
+        pred, pred_id = torch.topk(logit, 3, dim=1)  # id=[batch_size, K]
         for i, gt in enumerate(y):
             gt = gt.item()
             cand_ids = pred_id[i].tolist()
             if gt in cand_ids:
                 metrics['TopicId_Hits@3'] += 1
 
-        pred, pred_id = torch.topk(logit, 5, dim=1)  # id=[bs, K]
+        pred, pred_id = torch.topk(logit, 5, dim=1)  # id=[batch_size, K]
         for i, gt in enumerate(y):
             gt = gt.item()
             cand_ids = pred_id[i].tolist()

@@ -336,7 +336,7 @@ class TrainLoop_Ours():
         for K in [1, 10, 50]:
             # pred = logit.max(-1, keepdim=True)[1]
             # acc += pred.eq(y.view_as(pred)).sum().item()    # 记得加item()
-            pred, pred_id = torch.topk(logit, K, dim=1)  # id=[bs, K]
+            pred, pred_id = torch.topk(logit, K, dim=1)  # id=[batch_size, K]
             for i, gt in enumerate(y):
                 gt = gt.item()
                 cand_ids = pred_id[i].tolist()

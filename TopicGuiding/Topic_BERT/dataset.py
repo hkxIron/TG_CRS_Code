@@ -113,7 +113,7 @@ class CRSdataset(Dataset):
             f = pickle.load(open(filename, 'rb'))[:]
             args.use_size = len(f) if args.use_size == -1 else args.use_size
             for conv in tqdm(f[:args.use_size]):
-                # for conv in tqdm(f[:]):
+                # for conv_kernel in tqdm(f[:]):
                 conv_id = int(conv['conv_id'])
                 if len(conv['messages']) == 0:
                     conv_id_no_messages.append(conv_id)
@@ -139,7 +139,7 @@ class CRSdataset(Dataset):
             self.id_to_topic_path = {}
             self.id_to_target = {}
             for conv in tqdm(f[:args.use_size]):
-                # for conv in tqdm(f[:]):
+                # for conv_kernel in tqdm(f[:]):
                 conv_id = int(conv['conv_id'])
                 if conv_id in conv_id_no_messages:
                     continue
@@ -204,7 +204,7 @@ class CRSdataset(Dataset):
                             print('Other action by seeker = ', action)
             self.id_to_final_topic = {}  # :list of kw
             for conv in tqdm(f[:args.use_size]):
-                # for conv in tqdm(f[:]):
+                # for conv_kernel in tqdm(f[:]):
                 conv_id = int(conv['conv_id'])
                 if conv_id in conv_id_no_messages:
                     continue
