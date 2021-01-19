@@ -89,17 +89,18 @@ class Model(nn.Module):
         if not os.path.exists(self.save_path3):
             os.mkdir(self.save_path3)
 
+    # 利用context, topic history, profile history 来预测下一个topic
     def forward(self, x):
         context, context_mask, topic_path_kw, topic_mask, user_profile, profile_mask = x
         # context_last_hidden_state:[batch_size, seq_len, hidden_size]，
         # context_topic: [batch_size, hidden_size]
-        context_last_hidden_state, context_topic = self.context_bert(context, context_mask)
+        context_last_hidden_state, context = self.context_bert(context, context_mask)
 
         # topic_last_hidden_state: [batch_size, seq_len, hidden_size]
         # topic_pooled : [batch_size, hidden_size]
         topic_last_hidden_state, topic_pooled = self.topic_bert(topic_path_kw, topic_mask)
 
-        batch_size, sent_num, word_num = user_profile.shape
+        batch_size, sentence_num, word_num = user_profile.shape
         user_profile = user_profile.view(-1, user_profile.shape[-1])
         profile_mask = profile_mask.view(-1, profile_mask.shape[-1])
 
@@ -108,8 +109,8 @@ class Model(nn.Module):
         profile_last_hidden_state, profile_pooled = self.profile_bert(user_profile, profile_mask)
 
         # out_topic_id:[batch_size, topic_class_num]
-        out_topic_id = self.intention_classifier(context_topic, topic_pooled,
-                                                 profile_pooled, batch_size, sent_num,
+        out_topic_id = self.intention_classifier(context, topic_pooled,
+                                                 profile_pooled, batch_size, sentence_num,
                                                  word_num)
 
         return out_topic_id

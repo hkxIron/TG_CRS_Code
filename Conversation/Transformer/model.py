@@ -107,7 +107,7 @@ class TransformerModel(nn.Module):
         self.dim = opt['dim']
 
     def _starts(self, bsz):
-        """Return bsz start tokens."""
+        """Return batch_size start tokens."""
         return self.START.detach().expand(bsz, 1).to(self.opt['device'])
 
     def decode_greedy(self, encoder_states, bsz, maxlen):
@@ -131,7 +131,7 @@ class TransformerModel(nn.Module):
             pair (logits, choices) of the greedy decode
 
         :rtype:
-            (FloatTensor[bsz, maxlen, vocab], LongTensor[bsz, maxlen])
+            (FloatTensor[batch_size, maxlen, vocab], LongTensor[batch_size, maxlen])
         """
         # v2: encoder_states_kg encoder_states_db 都是None
         xs = self._starts(bsz)
@@ -167,7 +167,7 @@ class TransformerModel(nn.Module):
             the prediction targets. Contains both the start and end tokens.
 
         :type ys:
-            LongTensor[bsz, time]
+            LongTensor[batch_size, time]
 
         :param encoder_states:
             Output of the transfomer_encoder. Model specific types.
@@ -179,7 +179,7 @@ class TransformerModel(nn.Module):
             pair (logits, choices) containing the logits and MLE predictions
 
         :rtype:
-            (FloatTensor[bsz, ys, vocab], LongTensor[bsz, ys])
+            (FloatTensor[batch_size, ys, vocab], LongTensor[batch_size, ys])
         """
         bsz = ys.size(0)
         seqlen = ys.size(1)
@@ -233,12 +233,12 @@ class TransformerModel(nn.Module):
         :param xs:
             input to the transfomer_encoder
         :type xs:
-            LongTensor[bsz, seqlen]
+            LongTensor[batch_size, seqlen]
         :param ys:
             Expected output from the decoder. Used
             for teacher forcing to calculate loss.
         :type ys:
-            LongTensor[bsz, outlen]
+            LongTensor[batch_size, outlen]
         :param prev_enc:
             if you know you'll pass in the same xs multiple times, you can pass
             in the transfomer_encoder output from the last forward pass to skip
@@ -247,16 +247,16 @@ class TransformerModel(nn.Module):
             max number of tokens to decode. if not set, will use the length of
             the longest label this model has seen. ignored when ys is not None.
         :param bsz:
-            if ys is not provided, then you must specify the bsz for greedy
+            if ys is not provided, then you must specify the batch_size for greedy
             decoding.
 
         :return:
             (scores, candidate_scores, encoder_states) tuple
 
             - scores contains the model's predicted token scores.
-              (FloatTensor[bsz, seqlen, num_features])
+              (FloatTensor[batch_size, seqlen, num_features])
             - candidate_scores are the score the model assigned to each candidate.
-              (FloatTensor[bsz, num_cands])
+              (FloatTensor[batch_size, num_cands])
             - encoder_states are the output of model.transfomer_encoder. Model specific types.
               Feed this back in to skip encoding on the next call.
         """
@@ -303,7 +303,7 @@ class TransformerModel(nn.Module):
         beam search. For example, this method is used to sort hypotheses,
         expand beams, etc.
 
-        For example, assume that encoder_states is an bsz x 1 tensor of values
+        For example, assume that encoder_states is an batch_size x 1 tensor of values
 
         .. code-block:: python
 

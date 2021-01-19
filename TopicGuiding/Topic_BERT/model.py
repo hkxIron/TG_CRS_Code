@@ -23,10 +23,10 @@ class IntentionClassifier(nn.Module):
     def __init__(self, args, bert_embed_size=768):
         super(IntentionClassifier, self).__init__()
         self.args = args
-        self.state2topic_id = nn.Linear(bert_embed_size, args.topic_class_num)
+        self.full_connection = nn.Linear(bert_embed_size, args.topic_class_num)
 
     def forward(self, context_rep):
-        out_topic_id = self.state2topic_id(context_rep)
+        out_topic_id = self.full_connection(context_rep)
 
         return out_topic_id
 
@@ -81,12 +81,12 @@ class Model(nn.Module):
         # if not os.path.exists(self.save_path3):
         #     os.mkdir(self.save_path3)
 
+    # 只用topic的历史预测一下topic
     def forward(self, x):
-        context, context_mask, topic_path_kw, tp_mask, user_profile, profile_mask = x
+        context, context_mask, topic_path_kw, topic_mask, user_profile, profile_mask = x
         # [batch_size, seq_len, hidden_size]， [batch_size, hidden_size]
 
-        tp_last_hidden_state, topic_pooled = self.topic_bert(
-            topic_path_kw, tp_mask)
+        tp_last_hidden_state, topic_pooled = self.topic_bert(topic_path_kw, topic_mask)
 
         out_topic_id = self.intention_classifier(topic_pooled)
 

@@ -23,18 +23,16 @@ class IntentionClassifier(nn.Module):
     def __init__(self, args, bert_embed_size=768):
         super(IntentionClassifier, self).__init__()
         self.args = args
-        self.state2topic_id = nn.Linear(bert_embed_size * 3,
-                                        args.topic_class_num)
+        self.full_connection = nn.Linear(in_features=bert_embed_size * 3, out_features=args.topic_class_num)
 
-    def forward(self, context_rep, tp_rep, profile_pooled, bs, sent_num,
-                word_num):
-        profile_pooled = profile_pooled.view(bs, sent_num, -1)
+    def forward(self, context_rep, topic_rep, profile_pooled, batch_size, sent_num, word_num):
+        profile_pooled = profile_pooled.view(batch_size, sent_num, -1)
         # (batch_size, hidden)
         profile_pooled = torch.mean(profile_pooled, dim=1)
         # [batch_size, hidden_size*3]
-        state_rep = torch.cat((context_rep, tp_rep, profile_pooled), 1)
+        state_rep = torch.cat((context_rep, topic_rep, profile_pooled), 1)
 
-        out_topic_id = self.state2topic_id(state_rep)
+        out_topic_id = self.full_connection(state_rep)
 
         return out_topic_id
 
@@ -60,25 +58,21 @@ class Model(nn.Module):
             bert_path2 = bert_path2 + '/2'
             bert_path3 = bert_path3 + '/3'
 
-        self.context_bert = BertModel.from_pretrained(
-            bert_path1)  # /bert_pretrain/
-        self.topic_bert = BertModel.from_pretrained(
-            bert_path2)  # /bert_pretrain/
-        self.profile_bert = BertModel.from_pretrained(
-            bert_path3)  # /bert_pretrain/
+        self.context_bert = BertModel.from_pretrained(bert_path1)  # /bert_pretrain/
+        self.topic_bert = BertModel.from_pretrained(bert_path2)  # /bert_pretrain/
+        self.profile_bert = BertModel.from_pretrained(bert_path3)  # /bert_pretrain/
+
         # to check
         for model in [self.context_bert, self.topic_bert, self.profile_bert]:
             for param in model.parameters():
                 param.requires_grad = True  # 每个参数都要 求梯度
 
         ## define IntentionClassifier
-        self.intention_classifier = IntentionClassifier(
-            self.args, bert_embed_size)
+        self.intention_classifier = IntentionClassifier(self.args, bert_embed_size)
         # init if need, save and load both in bert1_path
         self.addition_save_name = 'addition_model.pth'
         if args.init_add:
-            self.load_addition_params(join(bert_path1,
-                                           self.addition_save_name))
+            self.load_addition_params(join(bert_path1, self.addition_save_name))
 
         # 记录save path
         self.save_path1 = args.model_save_path + '/1'
@@ -91,26 +85,26 @@ class Model(nn.Module):
         if not os.path.exists(self.save_path3):
             os.mkdir(self.save_path3)
 
+    # 论文中声称：Ours w/o target is the ablation model of our proposed model by removing the target topic from input
+    # 但与 Ours model从代码上看不出差别
+    # 利用bert来预测下一个topic
     def forward(self, x):
-        context, context_mask, topic_path_kw, topic_path_attitude, tp_mask, user_profile, profile_mask = x
+        context, context_mask, topic_path_kw, topic_path_attitude, topic_mask, user_profile, profile_mask = x
         # [batch_size, seq_len, hidden_size]， [batch_size, hidden_size]
-        context_last_hidden_state, context_topic = self.context_bert(
-            context, context_mask)
+        context_last_hidden_state, context_topic = self.context_bert(context, context_mask)
         # [batch_size, hidden_size]
 
-        # topic_pooled = (batch_size, hiddensize)
-        tp_last_hidden_state, topic_pooled = self.topic_bert(
-            topic_path_kw, tp_mask)
+        # topic_pooled = (batch_size, hidden_size)
+        topic_last_hidden_state, topic_pooled = self.topic_bert(topic_path_kw, topic_mask)
 
-        bs, sent_num, word_num = user_profile.shape
+        batch_size, sentence_num, word_num = user_profile.shape
         user_profile = user_profile.view(-1, user_profile.shape[-1])
         profile_mask = profile_mask.view(-1, profile_mask.shape[-1])
         # (batch_size, word_num, hidden)
-        profile_last_hidden_state, profile_pooled = self.profile_bert(
-            user_profile, profile_mask)
+        profile_last_hidden_state, profile_pooled = self.profile_bert(user_profile, profile_mask)
 
         out_topic_id = self.intention_classifier(context_topic, topic_pooled,
-                                                 profile_pooled, bs, sent_num,
+                                                 profile_pooled, batch_size, sentence_num,
                                                  word_num)
         return out_topic_id
 
@@ -126,8 +120,7 @@ class Model(nn.Module):
         self.topic_bert.save_pretrained(self.save_path2)
         self.profile_bert.save_pretrained(self.save_path3)
 
-        self.intention_classifier.save_model(
-            join(self.save_path1, self.addition_save_name))
+        self.intention_classifier.save_model(join(self.save_path1, self.addition_save_name))
         # torch.save(self.intention_classifier.state_dict(), \
         #     join(self.save_path1, self.addition_save_name))
 

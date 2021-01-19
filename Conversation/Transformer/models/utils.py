@@ -46,7 +46,7 @@ def _create_embeddings(dictionary, embedding_size, padding_idx):
 
 def _create_entity_embeddings(entity_num, embedding_size, padding_idx):
     """Create and initialize word embeddings."""
-    e = nn.Embedding(entity_num, embedding_size)
-    nn.init.normal_(e.weight, mean=0, std=embedding_size ** -0.5)
-    nn.init.constant_(e.weight[padding_idx], 0)
-    return e
+    embedding = nn.Embedding(entity_num, embedding_size)
+    nn.init.normal_(embedding.weight, mean=0, std=embedding_size ** -0.5)
+    nn.init.constant_(embedding.weight[padding_idx], 0)
+    return embedding

@@ -119,6 +119,7 @@ def create_position_codes(n_pos, dim, out):
 
     out[:, 0::2] = torch.FloatTensor(np.sin(position_enc)).type_as(out)
     out[:, 1::2] = torch.FloatTensor(np.cos(position_enc)).type_as(out)
+    # Detaches the Tensor from the graph that created it, making it a leaf. Views cannot be detached in-place.
     out.detach_()
     out.requires_grad = False
 
@@ -135,7 +136,7 @@ class BasicAttention(nn.Module):
         if self.attn == 'cosine':
             l1 = self.cosine(xs, ys).unsqueeze(self.dim - 1)
         else:
-            l1 = torch.bmm(xs, ys.transpose(1, 2))
+            l1 = torch.bmm(xs, ys.transpose(1, 2)) #  batch matrix-matrix product
             if self.attn == 'sqrt':
                 d_k = ys.size(-1)
                 l1 = l1 / math.sqrt(d_k)
@@ -153,17 +154,17 @@ class MultiHeadAttention(nn.Module):
         self.dim = dim
 
         self.attn_dropout = nn.Dropout(p=dropout)  # --attention-dropout
-        self.q_lin = nn.Linear(dim, dim)
-        self.k_lin = nn.Linear(dim, dim)
-        self.v_lin = nn.Linear(dim, dim)
+        self.w_q = nn.Linear(dim, dim)
+        self.w_k = nn.Linear(dim, dim)
+        self.w_v = nn.Linear(dim, dim)
         # TODO: merge for the initialization step
-        nn.init.xavier_normal_(self.q_lin.weight)
-        nn.init.xavier_normal_(self.k_lin.weight)
-        nn.init.xavier_normal_(self.v_lin.weight)
+        nn.init.xavier_normal_(self.w_q.weight)
+        nn.init.xavier_normal_(self.w_k.weight)
+        nn.init.xavier_normal_(self.w_v.weight)
         # and set biases to 0
-        self.out_lin = nn.Linear(dim, dim)
+        self.full_connection = nn.Linear(dim, dim)
 
-        nn.init.xavier_normal_(self.out_lin.weight)
+        nn.init.xavier_normal_(self.full_connection.weight)
 
     def forward(self, query, key=None, value=None, mask=None):
         # Input is [B, query_len, dim]
@@ -179,7 +180,7 @@ class MultiHeadAttention(nn.Module):
         def prepare_head(tensor):
             # input is [batch_size, seq_len, n_heads * dim_per_head]
             # output is [batch_size * n_heads, seq_len, dim_per_head]
-            bsz, seq_len, _ = tensor.size()
+            batch_size, seq_len, _ = tensor.size()
             tensor = tensor.view(batch_size, tensor.size(1), n_heads, dim_per_head)
             tensor = tensor.transpose(1, 2).contiguous().view(
                 batch_size * n_heads,
@@ -198,25 +199,39 @@ class MultiHeadAttention(nn.Module):
             value = key
         _, key_len, dim = key.size()
 
-        q = prepare_head(self.q_lin(query))
-        k = prepare_head(self.k_lin(key))
-        v = prepare_head(self.v_lin(value))
+        # q: [batch_size * n_heads, seq_len, dim_per_head]
+        # k: [batch_size * n_heads, seq_len, dim_per_head]
+        # v: [batch_size * n_heads, seq_len, dim_per_head]
+        q = prepare_head(self.w_q(query))
+        k = prepare_head(self.w_k(key))
+        v = prepare_head(self.w_v(value))
 
+        # dot_prod: [batch_size * n_heads, seq_len, seq_len]
         dot_prod = q.div_(scale).bmm(k.transpose(1, 2))
-        # [B * n_heads, query_len, key_len]
+        # [batch_size * n_heads, query_len, key_len]
         attn_mask = (
             (mask == 0)
             .view(batch_size, 1, -1, key_len)
-            .repeat(1, n_heads, 1, 1)
+            .repeat(1, n_heads, 1, 1) # 对于每个头都是一样的重复
             .expand(batch_size, n_heads, query_len, key_len)
             .view(batch_size * n_heads, query_len, key_len)
         )
         assert attn_mask.shape == dot_prod.shape
-        dot_prod.masked_fill_(attn_mask, neginf(dot_prod.dtype))
+        # dot_prod: [batch_size * n_heads, seq_len, seq_len]
+        # 将mask为0的地方填充为比较大的负数
+        dot_prod.masked_fill_(mask=attn_mask, value=neginf(dot_prod.dtype))
 
+        # dot_prod: [batch_size * n_heads, seq_len, seq_len]
+        # attn_weights: [batch_size * n_heads, seq_len, seq_len]
         attn_weights = F.softmax(dot_prod, dim=-1).type_as(query)
         attn_weights = self.attn_dropout(attn_weights)  # --attention-dropout
 
+        # dot_prod: [batch_size * n_heads, seq_len, seq_len]
+        # v: [batch_size * n_heads, seq_len, dim_per_head]
+        # attentioned: [batch_size * n_heads, seq_len, dim_per_head]
+        #  => [batch_size , n_heads, seq_len, dim_per_head]
+        #  => [batch_size , seq_len, n_heads, dim_per_head]
+        #  => [batch_size , seq_len, dim]
         attentioned = attn_weights.bmm(v)
         attentioned = (
             attentioned.type_as(query)
@@ -224,8 +239,9 @@ class MultiHeadAttention(nn.Module):
             .transpose(1, 2).contiguous()
             .view(batch_size, query_len, dim)
         )
-
-        out = self.out_lin(attentioned)
+        # attentioned: [batch_size , seq_len, dim]
+        # out: [batch_size , seq_len, dim]
+        out = self.full_connection(attentioned)
 
         return out
 
@@ -321,9 +337,7 @@ class TransformerEncoder4kg(nn.Module):
         # create the positional embeddings
         self.position_embeddings = nn.Embedding(n_positions, embedding_size)
         if not learn_positional_embeddings:
-            create_position_codes(
-                n_positions, embedding_size, out=self.position_embeddings.weight
-            )
+            create_position_codes(n_positions, embedding_size, out=self.position_embeddings.weight)
         else:
             nn.init.normal_(self.position_embeddings.weight, 0, embedding_size ** -0.5)
 
@@ -381,14 +395,15 @@ class TransformerEncoderLayer(nn.Module):
             dropout=attention_dropout,  # --attention-dropout
         )
         self.norm1 = nn.LayerNorm(embedding_size)
-        self.ffn = TransformerFFN(embedding_size, ffn_size, relu_dropout=relu_dropout)
+        self.feedforwardNet = TransformerFFN(embedding_size, ffn_size, relu_dropout=relu_dropout)
         self.norm2 = nn.LayerNorm(embedding_size)
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, tensor, mask):
+        # 每个transformer layer有attention, layer norm, residual block, feedforward组成
         tensor = tensor + self.dropout(self.attention(tensor, mask=mask))
         tensor = _normalize(tensor, self.norm1)
-        tensor = tensor + self.dropout(self.ffn(tensor))
+        tensor = tensor + self.dropout(self.feedforwardNet(tensor))
         tensor = _normalize(tensor, self.norm2)
         tensor *= mask.unsqueeze(-1).type_as(tensor)
         return tensor
@@ -455,32 +470,26 @@ class TransformerEncoder(nn.Module):
 
         # check input formats:
         if embedding is not None:
-            assert (
-                embedding_size is None or embedding_size == embedding.weight.shape[1]
-            ), "Embedding dim must match the embedding size."
+            assert (embedding_size is None or embedding_size == embedding.weight.shape[1]), "Embedding dim must match the embedding size."
 
         if embedding is not None:
             self.embeddings = embedding
         else:
             assert False
             assert padding_idx is not None
-            self.embeddings = nn.Embedding(
-                vocabulary_size, embedding_size, padding_idx=padding_idx
-            )
+            self.embeddings = nn.Embedding(vocabulary_size, embedding_size, padding_idx=padding_idx)
             nn.init.normal_(self.embeddings.weight, 0, embedding_size ** -0.5)
 
         # create the positional embeddings
         self.position_embeddings = nn.Embedding(n_positions, embedding_size)
         if not learn_positional_embeddings:
-            create_position_codes(
-                n_positions, embedding_size, out=self.position_embeddings.weight
-            )
+            create_position_codes(n_positions, embedding_size, out=self.position_embeddings.weight)
         else:
             nn.init.normal_(self.position_embeddings.weight, 0, embedding_size ** -0.5)
 
         # build the model
         self.layers = nn.ModuleList()
-        for _ in range(self.n_layers):
+        for _ in range(self.n_layers): # 多个transformer layer叠加
             self.layers.append(TransformerEncoderLayer(
                 n_heads, embedding_size, ffn_size,
                 attention_dropout=attention_dropout,
@@ -494,25 +503,38 @@ class TransformerEncoder(nn.Module):
             mask is a ByteTensor of shape [batch, seq_len], filled with 1 when
             inside the sequence and 0 outside.
         """
+        # input: [batch, seq_len]
+        # mask: [batch, seq_len]
         mask = input != self.padding_idx
-        positions = (mask.cumsum(dim=1, dtype=torch.int64) - 1).clamp_(min=0)
+        # positions: [batch, seq_len]
+        positions = (mask.cumsum(dim=1, dtype=torch.int64) - 1).clamp_(min=0) # clamp:截断数值
+        # tensor:[batch, seq_len, embedding_size]
         tensor = self.embeddings(input)
         if self.embeddings_scale:
             tensor = tensor * np.sqrt(self.dim)
+        # tensor:[batch, seq_len, embedding_size]
         tensor = tensor + self.position_embeddings(positions).expand_as(tensor)
         # --dropout on the embeddings
         tensor = self.dropout(tensor)
 
+        # mask: [batch, seq_len]
+        #   => [batch, seq_len, 1]
+        #
+        # tensor:[batch, seq_len, embedding_size]
+        # mask: [batch, seq_len, 1]
         tensor *= mask.unsqueeze(-1).type_as(tensor)
-        for i in range(self.n_layers):
+        for i in range(self.n_layers): # 经过多层transformer encoder layer
             tensor = self.layers[i](tensor, mask)
 
         if self.reduction:
+            # tensor:[batch, seq_len, embedding_size]
+            # mask: [batch, seq_len, 1]
             divisor = mask.type_as(tensor).sum(dim=1).unsqueeze(-1).clamp(min=1e-7)
             output = tensor.sum(dim=1) / divisor
             return output
         else:
             output = tensor
+            # tensor:[batch, seq_len, embedding_size]
             return output, mask
 
 class TransformerEncoder_mask(nn.Module):
@@ -586,17 +608,13 @@ class TransformerEncoder_mask(nn.Module):
         else:
             assert False
             assert padding_idx is not None
-            self.embeddings = nn.Embedding(
-                vocabulary_size, embedding_size, padding_idx=padding_idx
-            )
+            self.embeddings = nn.Embedding(vocabulary_size, embedding_size, padding_idx=padding_idx)
             nn.init.normal_(self.embeddings.weight, 0, embedding_size ** -0.5)
 
         # create the positional embeddings
         self.position_embeddings = nn.Embedding(n_positions, embedding_size)
         if not learn_positional_embeddings:
-            create_position_codes(
-                n_positions, embedding_size, out=self.position_embeddings.weight
-            )
+            create_position_codes(n_positions, embedding_size, out=self.position_embeddings.weight)
         else:
             nn.init.normal_(self.position_embeddings.weight, 0, embedding_size ** -0.5)
 
@@ -604,7 +622,7 @@ class TransformerEncoder_mask(nn.Module):
         self.layers = nn.ModuleList()
         for _ in range(self.n_layers):
             self.layers.append(TransformerEncoderLayer(
-                n_heads, embedding_size+128, ffn_size+128,
+                n_heads, embedding_size+128, ffn_size+128, # 在这里比 TransformerEncoder多了128维的embedding
                 attention_dropout=attention_dropout,
                 relu_dropout=relu_dropout,
                 dropout=dropout,
@@ -616,17 +634,25 @@ class TransformerEncoder_mask(nn.Module):
             mask is a ByteTensor of shape [batch, seq_len], filled with 1 when
             inside the sequence and 0 outside.
         """
+        # input: [batch, seq_len]
+        # mask: [batch, seq_len]
         mask = input != self.padding_idx
+        # positions: [batch, seq_len]
         positions = (mask.cumsum(dim=1, dtype=torch.int64) - 1).clamp_(min=0)
+        # tensor:[batch, seq_len, embedding_size]
         tensor = self.embeddings(input)
         if self.embeddings_scale:
             tensor = tensor * np.sqrt(self.dim)
         p_length=tensor.size()[1]
+        # tensor:[batch, seq_len, embedding_size]
         tensor = tensor + self.position_embeddings(positions).expand_as(tensor)
-        tensor=torch.cat([tensor,m_emb.unsqueeze(1).repeat(1,p_length,1)],dim=-1)
+        # m_emb: [batch, embedding_size]
+        # 只在这里与 TransformerEncoder不同
+        tensor=torch.cat([tensor, m_emb.unsqueeze(1).repeat(1,p_length,1)],dim=-1)
         # --dropout on the embeddings
         tensor = self.dropout(tensor)
 
+        # tensor:[batch, seq_len, embedding_size]
         tensor *= mask.unsqueeze(-1).type_as(tensor)
 
         for i in range(self.n_layers):
@@ -655,22 +681,23 @@ class TransformerDecoderLayer(nn.Module):
         self.ffn_dim = ffn_size
         self.dropout = nn.Dropout(p=dropout)
 
-        self.self_attention = MultiHeadAttention(
-            n_heads, embedding_size, dropout=attention_dropout
-        )
+        # decoder intra attention
+        self.self_attention = MultiHeadAttention(n_heads, embedding_size, dropout=attention_dropout)
         self.norm1 = nn.LayerNorm(embedding_size)
 
-        self.encoder_attention = MultiHeadAttention(
-            n_heads, embedding_size, dropout=attention_dropout
-        )
+        # encoder-decoder attention
+        self.encoder_attention = MultiHeadAttention(n_heads, embedding_size, dropout=attention_dropout)
         self.norm2 = nn.LayerNorm(embedding_size)
 
-        self.ffn = TransformerFFN(embedding_size, ffn_size, relu_dropout=relu_dropout)
+        self.feedforwardNet = TransformerFFN(embedding_size, ffn_size, relu_dropout=relu_dropout)
         self.norm3 = nn.LayerNorm(embedding_size)
 
     def forward(self, x, encoder_output, encoder_mask):
-        decoder_mask = self._create_selfattn_mask(x)
-        # first self attn
+        # decoder_mask:[batch_size, seq_len, seq_len], 下三角全为1的矩阵
+        decoder_mask = self._create_self_attn_mask(x) #
+
+        # 1.first self attn
+        # x:[batch_size, seq_len, dim], x为当前decoder已经解码出来的序列
         residual = x
         # don't peak into the future!
         x = self.self_attention(query=x, mask=decoder_mask)
@@ -678,6 +705,7 @@ class TransformerDecoderLayer(nn.Module):
         x = x + residual
         x = _normalize(x, self.norm1)
 
+        # 2.encoder-decoder attention
         residual = x
         x = self.encoder_attention(
             query=x,
@@ -689,23 +717,27 @@ class TransformerDecoderLayer(nn.Module):
         x = residual + x
         x = _normalize(x, self.norm2)
 
-        # finally the ffn
+        # 3.finally the feedforwardNet
         residual = x
-        x = self.ffn(x)
+        x = self.feedforwardNet(x)
         x = self.dropout(x)  # --dropout
         x = residual + x
         x = _normalize(x, self.norm3)
 
         return x
 
-    def _create_selfattn_mask(self, x):
+    def _create_self_attn_mask(self, x):
         # figure out how many timestamps we need
-        bsz = x.size(0)
-        time = x.size(1)
+        batch_size = x.size(0)
+        seq_len = x.size(1)
         # make sure that we don't look into the future
-        mask = torch.tril(x.new(time, time).fill_(1))
+        # the lower triangular, 下三角矩阵, 矩阵元素全为1
+        # mask:[seq_len, seq_len]
+        mask = torch.tril(x.new(seq_len, seq_len).fill_(1))
         # broadcast across batch
-        mask = mask.unsqueeze(0).expand(bsz, -1, -1)
+        # mask:[1, seq_len, seq_len]
+        #   => [batch_size, seq_len, seq_len], 下三角全为1
+        mask = mask.unsqueeze(0).expand(batch_size, -1, -1) # -1 means not changing the size of that dimension
         return mask
 
 class TransformerDecoder(nn.Module):
@@ -767,9 +799,7 @@ class TransformerDecoder(nn.Module):
         # create the positional embeddings
         self.position_embeddings = nn.Embedding(n_positions, embedding_size)
         if not learn_positional_embeddings:
-            create_position_codes(
-                n_positions, embedding_size, out=self.position_embeddings.weight
-            )
+            create_position_codes(n_positions, embedding_size, out=self.position_embeddings.weight)
         else:
             nn.init.normal_(self.position_embeddings.weight, 0, embedding_size ** -0.5)
 
@@ -786,9 +816,11 @@ class TransformerDecoder(nn.Module):
     def forward(self, input, encoder_state, incr_state=None):
         encoder_output, encoder_mask = encoder_state
 
+        # input:[batch_size, seq_len, dim]
         seq_len = input.size(1)
         positions = input.new(seq_len).long()
-        positions = torch.arange(seq_len, out=positions).unsqueeze(0)
+        # positions:[1, seq_len]
+        positions = torch.arange(end=seq_len, out=positions).unsqueeze(0) # out:是指output tensor,不过这里的代码有点难懂
         tensor = self.embeddings(input)
         if self.embeddings_scale:
             tensor = tensor * np.sqrt(self.dim)
@@ -835,12 +867,12 @@ class TransformerDecoderLayerKG(nn.Module):
         # )
         # self.norm2_kg = nn.LayerNorm(embedding_size)
 
-        self.ffn = TransformerFFN(embedding_size, ffn_size, relu_dropout=relu_dropout)
+        self.feedforwardNet = TransformerFFN(embedding_size, ffn_size, relu_dropout=relu_dropout)
         self.norm3 = nn.LayerNorm(embedding_size)
 
     def forward(self, x, encoder_output, encoder_mask, kg_encoder_output, kg_encoder_mask, db_encoder_output, db_encoder_mask):
         # kg_encoder_output, kg_encoder_mask, db_encoder_output, db_encoder_mask 都没用啊哦
-        decoder_mask = self._create_selfattn_mask(x)
+        decoder_mask = self._create_self_attn_mask(x)
         # first self attn
         residual = x
         # don't peak into the future!
@@ -882,16 +914,16 @@ class TransformerDecoderLayerKG(nn.Module):
         x = residual + x
         x = _normalize(x, self.norm2)
         
-        # finally the ffn
+        # finally the feedforwardNet
         residual = x
-        x = self.ffn(x)
+        x = self.feedforwardNet(x)
         x = self.dropout(x)  # --dropout
         x = residual + x
         x = _normalize(x, self.norm3)
 
         return x
 
-    def _create_selfattn_mask(self, x):
+    def _create_self_attn_mask(self, x):
         # figure out how many timestamps we need
         bsz = x.size(0)
         time = x.size(1)
@@ -1027,17 +1059,14 @@ class TransformerMemNetModel(nn.Module):
         if n_positions < 0:
             raise ValueError('n_positions must be positive')
 
-        self.context_encoder = _build_encoder(
-            opt, dictionary, self.embeddings, self.pad_idx,
-            n_positions=n_positions,
-        )
+        self.context_encoder = _build_encoder(opt, dictionary, self.embeddings, self.pad_idx, n_positions=n_positions, )
 
         if opt.get('share_encoders'):
-            self.cand_encoder = TransformerResponseWrapper(
+            self.candidate_encoder = TransformerResponseWrapper(
                 self.context_encoder, self.context_encoder.out_dim,
             )
         else:
-            self.cand_encoder = _build_encoder(
+            self.candidate_encoder = _build_encoder(
                 opt, dictionary, self.embeddings, self.pad_idx, reduction=True,
                 n_positions=n_positions,
             )
@@ -1050,9 +1079,9 @@ class TransformerMemNetModel(nn.Module):
         else:
             self.memory_transformer = self.context_encoder
 
-        self.attender = BasicAttention(dim=2, attn=opt['memory_attention'])
+        self.basic_attention = BasicAttention(dim=2, attn=opt['memory_attention'])
 
-    def encode_cand(self, words):
+    def encode_candidate(self, words):
         if words is None:
             return None
 
@@ -1063,7 +1092,7 @@ class TransformerMemNetModel(nn.Module):
         else:
             oldshape = None
 
-        encoded = self.cand_encoder(words)
+        encoded = self.candidate_encoder(words)
 
         if oldshape is not None:
             encoded = encoded.reshape(oldshape[0], oldshape[1], -1)
@@ -1076,31 +1105,32 @@ class TransformerMemNetModel(nn.Module):
             # it's possible that only candidates were passed into the
             # forward function, return None here for LHS representation
             return None, None
-
+        # context_w: [batch_size, seq_len]
+        # context_h: [batch_size, seq_len]
         context_h = self.context_encoder(context_w)
 
         if memories_w is None:
             return [], context_h
 
-        bsz = memories_w.size(0)
+        batch_size = memories_w.size(0)
         memories_w = memories_w.view(-1, memories_w.size(-1))
         memories_h = self.memory_transformer(memories_w)
-        memories_h = memories_h.view(bsz, -1, memories_h.size(-1))
+        memories_h = memories_h.view(batch_size, -1, memories_h.size(-1))
 
         context_h = context_h.unsqueeze(1)
-        context_h, weights = self.attender(context_h, memories_h)
+        context_h, weights = self.basic_attention(context_h, memories_h)
 
         return weights, context_h
 
     def forward(self, xs, mems, cands):
         weights, context_h = self.encode_context_memory(xs, mems)
-        cands_h = self.encode_cand(cands)
+        candidate_h = self.encode_candidate(cands)
 
         if self.opt['normalize_sent_emb']:
             context_h = context_h / context_h.norm(2, dim=1, keepdim=True)
-            cands_h = cands_h / cands_h.norm(2, dim=1, keepdim=True)
+            candidate_h = candidate_h / candidate_h.norm(2, dim=1, keepdim=True)
 
-        return context_h, cands_h
+        return context_h, candidate_h
 
 class TorchGeneratorModel(nn.Module):
     """
@@ -1113,7 +1143,7 @@ class TorchGeneratorModel(nn.Module):
         takes decoder params and returns decoder outputs after attn
 
     :attribute model.output:
-        takes decoder outputs and returns distr over dictionary
+        takes decoder outputs and returns distribution over dictionary
     """
     def __init__(
         self,
@@ -1130,15 +1160,15 @@ class TorchGeneratorModel(nn.Module):
         self.register_buffer('START', torch.LongTensor([start_idx]))
         self.longest_label = longest_label
 
-    def _starts(self, bsz):
-        """Return bsz start tokens."""
-        return self.START.detach().expand(bsz, 1)
+    def _starts(self, batch_size):
+        """Return batch_size start tokens."""
+        return self.START.detach().expand(batch_size, 1)
 
-    def decode_greedy(self, encoder_states, bsz, maxlen):
+    def decode_greedy(self, encoder_states, batch_size, maxlen):
         """
         Greedy search
 
-        :param int bsz:
+        :param int batch_size:
             Batch size. Because encoder_states is model-specific, it cannot
             infer this automatically.
 
@@ -1154,25 +1184,28 @@ class TorchGeneratorModel(nn.Module):
         :return:
             pair (logits, choices) of the greedy decode
 
-        :rtype:
-            (FloatTensor[bsz, maxlen, vocab], LongTensor[bsz, maxlen])
+        :return type:
+            (FloatTensor[batch_size, maxlen, vocab], LongTensor[batch_size, maxlen])
         """
-        xs = self._starts(bsz)
+        xs = self._starts(batch_size) # 从SOS开始
         incr_state = None
         logits = []
         for i in range(maxlen):
             # todo, break early if all beams saw EOS
             scores, incr_state = self.decoder(xs, encoder_states, incr_state)
             scores = scores[:, -1:, :]
+            # 计算分布
             scores = self.output(scores)
-            _, preds = scores.max(dim=-1)
+            _, preds = scores.max(dim=-1) # greedy是选最大的分数的index
             logits.append(scores)
+            # 将预测出来的index追加到xs中
             xs = torch.cat([xs, preds], dim=1)
             # check if everyone has generated an end token
-            all_finished = ((xs == self.END_IDX).sum(dim=1) > 0).sum().item() == bsz
+            all_finished = ((xs == self.END_IDX).sum(dim=1) > 0).sum().item() == batch_size
             if all_finished:
                 break
-        logits = torch.cat(logits, 1)
+        # logits:[batch_size, max_len, vocab_size]
+        logits = torch.cat(logits, dim=1)
         return logits, xs
 
     def decode_forced(self, encoder_states, ys):
@@ -1184,7 +1217,7 @@ class TorchGeneratorModel(nn.Module):
             the prediction targets. Contains both the start and end tokens.
 
         :type ys:
-            LongTensor[bsz, time]
+            LongTensor[batch_size, time]
 
         :param encoder_states:
             Output of the transfomer_encoder. Model specific types.
@@ -1196,12 +1229,12 @@ class TorchGeneratorModel(nn.Module):
             pair (logits, choices) containing the logits and MLE predictions
 
         :rtype:
-            (FloatTensor[bsz, ys, vocab], LongTensor[bsz, ys])
+            (FloatTensor[batch_size, ys, vocab], LongTensor[batch_size, ys])
         """
-        bsz = ys.size(0)
+        batch_size = ys.size(0)
         seqlen = ys.size(1)
-        inputs = ys.narrow(1, 0, seqlen - 1)
-        inputs = torch.cat([self._starts(bsz), inputs], 1)
+        inputs = ys.narrow(dim=1, start=0, length=seqlen - 1) # 截取数据一部分
+        inputs = torch.cat([self._starts(batch_size), inputs], dim=1)
         latent, _ = self.decoder(inputs, encoder_states)
         logits = self.output(latent)
         _, preds = logits.max(dim=2)
@@ -1217,7 +1250,7 @@ class TorchGeneratorModel(nn.Module):
         beam search. For example, this method is used to sort hypotheses,
         expand beams, etc.
 
-        For example, assume that encoder_states is an bsz x 1 tensor of values
+        For example, assume that encoder_states is an batch_size x 1 tensor of values
 
         .. code-block:: python
 
@@ -1299,12 +1332,12 @@ class TorchGeneratorModel(nn.Module):
         :param xs:
             input to the transfomer_encoder
         :type xs:
-            LongTensor[bsz, seqlen]
+            LongTensor[batch_size, seqlen]
         :param ys:
             Expected output from the decoder. Used
             for teacher forcing to calculate loss.
         :type ys:
-            LongTensor[bsz, outlen]
+            LongTensor[batch_size, outlen]
         :param prev_enc:
             if you know you'll pass in the same xs multiple times, you can pass
             in the transfomer_encoder output from the last forward pass to skip
@@ -1313,16 +1346,16 @@ class TorchGeneratorModel(nn.Module):
             max number of tokens to decode. if not set, will use the length of
             the longest label this model has seen. ignored when ys is not None.
         :param bsz:
-            if ys is not provided, then you must specify the bsz for greedy
+            if ys is not provided, then you must specify the batch_size for greedy
             decoding.
 
         :return:
             (scores, candidate_scores, encoder_states) tuple
 
             - scores contains the model's predicted token scores.
-              (FloatTensor[bsz, seqlen, num_features])
+              (FloatTensor[batch_size, seqlen, num_features])
             - candidate_scores are the score the model assigned to each candidate.
-              (FloatTensor[bsz, num_cands])
+              (FloatTensor[batch_size, num_cands])
             - encoder_states are the output of model.transfomer_encoder. Model specific types.
               Feed this back in to skip encoding on the next call.
         """

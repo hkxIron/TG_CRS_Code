@@ -81,10 +81,9 @@ class Model(nn.Module):
         #     os.mkdir(self.save_path3)
 
     def forward(self, x):
-        context, context_mask, topic_path_kw, tp_mask, user_profile, profile_mask = x
+        context, context_mask, topic_path_kw, topic_mask, user_profile, profile_mask = x
         # [batch_size, seq_len, hidden_size]， [batch_size, hidden_size]
-        context_last_hidden_state, context_topic = self.context_bert(
-            context, context_mask)
+        context_last_hidden_state, context_topic = self.context_bert(context, context_mask)
 
         out_topic_id = self.intention_classifier(context_topic)
 

@@ -224,8 +224,7 @@ class CRSdataset(Dataset):
 
             ## load user_profile
             self.id_to_profile = {}  #id: list of topic
-            user_to_topic_sents = pickle.load(
-                open("../../data/user2TopicSent.pkl", 'rb'))
+            user_to_topic_sents = pickle.load(open("../../data/user2TopicSent.pkl", 'rb'))
 
             # 信息分别收集结束了，接下来是整合
             self.id_to_final_topic = {

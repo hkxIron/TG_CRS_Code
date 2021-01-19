@@ -33,8 +33,7 @@ class TrainLoop_GPT2():
         self.args = args
         self.logger = logger
 
-        self.args.device = 'cuda:{}'.format(
-            self.args.gpu) if self.args.use_cuda else 'cpu'
+        self.args.device = 'cuda:{}'.format(self.args.gpu) if self.args.use_cuda else 'cpu'
         self.logger.info('using device:{}'.format(self.args.device))
 
         self.opt = vars(self.args)
@@ -85,15 +84,13 @@ class TrainLoop_GPT2():
         """
         if self.args.pretrained_model:
             # 如果指定了预训练的GPT2模型
-            self.model = GPT2LMHeadModel.from_pretrained(
-                self.args.pretrained_model)
+            self.model = GPT2LMHeadModel.from_pretrained(self.args.pretrained_model)
         else:
             # 若没有指定预训练模型，则初始化模型
-            model_config = transformers.modeling_gpt2.GPT2Config.from_json_file(
-                self.args.model_config)
+            model_config = transformers.modeling_gpt2.GPT2Config.from_json_file(self.args.model_config)
             self.model = GPT2LMHeadModel(config=model_config)
 
-        # 根据tokenizer的vocabulary调整GPT2模型的voca的大小
+        # 根据tokenizer的vocabulary调整GPT2模型的vocab的大小
         self.model.resize_token_embeddings(self.vocab_size)
 
         if self.use_cuda:
@@ -105,8 +102,7 @@ class TrainLoop_GPT2():
         self.n_ctx = self.model.config.to_dict().get("n_ctx")
 
         # 建立模型存储路径
-        if self.args.is_model_output and not os.path.exists(
-                self.args.dialogue_model_output_path):
+        if self.args.is_model_output and not os.path.exists(self.args.dialogue_model_output_path):
             os.mkdir(self.args.dialogue_model_output_path)
 
         # 记录模型参数数量
@@ -114,16 +110,13 @@ class TrainLoop_GPT2():
         parameters = self.model.parameters()
         for parameter in parameters:
             num_parameters += parameter.numel()
-        self.logger.info(
-            'number of model parameters: {}'.format(num_parameters))
+        self.logger.info('number of model parameters: {}'.format(num_parameters))
 
         # 是否使用多块GPU进行并行运算
         if self.args.use_multi_gpu:
             if self.args.use_cuda and torch.cuda.device_count() > 1:
                 self.logger.info("Let's use GPUs to train")
-                self.model = DataParallel(
-                    self.model,
-                    device_ids=[int(i) for i in self.args.device.split(',')])
+                self.model = DataParallel(self.model, device_ids=[int(i) for i in self.args.device.split(',')])
             else:
                 self.args.use_multi_gpu = False
 
@@ -174,8 +167,7 @@ class TrainLoop_GPT2():
                 # 解决在运行过程中，由于显存不足产生的cuda out of memory的问题
                 try:
                     outputs = self.model.forward(input_ids=input_ids)
-                    loss, accuracy = self.calculate_loss_and_accuracy(
-                        outputs, input_ids, mask_r, device=self.device)
+                    loss, accuracy = self.calculate_loss_and_accuracy(outputs, input_ids, mask_r, device=self.device)
                     train_loss.append(loss.item())
 
                     if self.multi_gpu:
@@ -184,6 +176,7 @@ class TrainLoop_GPT2():
                     if self.args.gradient_accumulation > 1:
                         loss = loss / self.args.gradient_accumulation
                         accuracy = accuracy / self.args.gradient_accumulation
+
                     loss.backward()
                     # 梯度裁剪解决的是梯度消失或爆炸的问题，即设定阈值
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(),
@@ -228,13 +221,11 @@ class TrainLoop_GPT2():
                 best_test_loss = test_loss
 
                 self.logger.info('saving model for epoch {}'.format(epoch + 1))
-                model_path = join(self.args.dialogue_model_output_path,
-                                  'model')
+                model_path = join(self.args.dialogue_model_output_path, 'model')
                 if not os.path.exists(model_path):
                     os.mkdir(model_path)
                 # 这里是什么意思，还不是很懂
-                model_to_save = self.model.module if hasattr(
-                    self.model, 'module') else self.model
+                model_to_save = self.model.module if hasattr( self.model, 'module') else self.model
                 model_to_save.save_pretrained(model_path)
                 self.logger.info("save model to " + str(model_path))
             else:
@@ -264,8 +255,7 @@ class TrainLoop_GPT2():
             for batch_idx, (input_ids, mask_r) in enumerate(test_dataloader):
                 input_ids = input_ids.to(self.device)
                 outputs = self.model.forward(input_ids=input_ids)
-                loss, accuracy = self.calculate_loss_and_accuracy(
-                    outputs, input_ids, mask_r, device=self.device)
+                loss, accuracy = self.calculate_loss_and_accuracy(outputs, input_ids, mask_r, device=self.device)
                 test_loss.append(loss.item())
                 # test_accuracy.append(accuracy)
                 if self.multi_gpu:
@@ -297,33 +287,24 @@ class TrainLoop_GPT2():
                     try:
                         if self.args.save_samples_path:
                             samples_file.write(f"[GroundTruth]: {content}\n")
-                        input_ids = [
-                            self.tokenizer.cls_token_id
-                        ] + history[-self.args.max_context_len +
-                                    1:]  # 每个input以[CLS]为开头 [SEP]结尾
+                        input_ids = [ self.tokenizer.cls_token_id ] + history[-self.args.max_context_len + 1:]  # 每个input以[CLS]为开头 [SEP]结尾
                         # tensor of [input_token_num]
-                        curr_input_tensor = torch.tensor(input_ids).long().to(
-                            self.device)
+                        curr_input_tensor = torch.tensor(input_ids).long().to(self.device)
                         generated = []
                         # 最多生成max_len个token
                         for _ in range(self.args.max_len):
                             # (tensor of [input_token_nums, 13317], tuple of 10 tensor)
-                            outputs = self.model(
-                                input_ids=curr_input_tensor)  #?shape?
+                            outputs = self.model(input_ids=curr_input_tensor)  #?shape?
                             # tensor of [13317]
                             next_token_logits = outputs[0][-1, :]
                             # 对于已生成的结果generated中的每个token添加一个重复惩罚项，降低其生成概率
                             for id in set(generated):
-                                next_token_logits[
-                                    id] /= self.args.repetition_penalty
+                                next_token_logits[id] /= self.args.repetition_penalty
                             next_token_logits = next_token_logits / self.args.temperature
                             # 对于[UNK]的概率设为无穷小，也就是说模型的预测结果不可能是[UNK]这个token
-                            next_token_logits[
-                                self.tokenizer.convert_tokens_to_ids(
-                                    '[UNK]')] = -float('Inf')
+                            next_token_logits[self.tokenizer.convert_tokens_to_ids('[UNK]')] = -float('Inf')
                             # 将topk以外的token的概率设置为-inf，然后排序，然后将accum-概率大与topp的token的概率设置为-inf
-                            filtered_logits = top_k_top_p_filtering(
-                                next_token_logits,
+                            filtered_logits = top_k_top_p_filtering(next_token_logits,
                                 top_k=self.args.topk,
                                 top_p=self.args.topp)
                             # torch.multinomial表示从候选集合中无放回地进行抽取num_samples个元素，权重越高，抽到的几率越高，返回元素的下标
@@ -361,37 +342,29 @@ class TrainLoop_GPT2():
         :param device:
         :return:
         """
-        logits = outputs[
-            0]  # 每个token用来预测下一个token的prediction_score,维度:[batch_size,token_len,voca_size]
+        #logits:[batch_size,token_len,vocab_size]
+        logits = outputs[0]  # 每个token用来预测下一个token的prediction_score,维度:[batch_size,token_len,vocab_size]
         # 用前n-1个token，预测出第n个token
         # 用第i个token的prediction_score用来预测第i+1个token。
         # 假定有input有n个token，则shift_logits表示model中第[0,n-2]个token的prediction_score，shift_labels表示第[1，n-1]的label
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous().to(device)
+        shift_logits = logits[..., :-1, :].contiguous() # 只取前n-1个数据
+
+        shift_labels = labels[..., 1:].contiguous().to(device) # 只取后n-1个数据
         ##################################### shift_labels给mask掉
         mask_shift_labels = mask_r[..., 1:].contiguous().to(device)
         shift_labels = shift_labels * mask_shift_labels
         #######################################
 
-        loss_fct = CrossEntropyLoss(
-            ignore_index=self.pad_id,
-            reduction='sum')  # 忽略self.pad_id的loss,并对所有的非self.pad_id的loss进行求和
-        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
-                        shift_labels.view(-1))
+        cross_entropy_loss = CrossEntropyLoss(ignore_index=self.pad_id, reduction='sum')  # 忽略self.pad_id的loss,并对所有的非self.pad_id的loss进行求和
+        loss = cross_entropy_loss(input=shift_logits.view(-1, shift_logits.size(-1)), target=shift_labels.view(-1))
 
-        _, preds = shift_logits.max(
-            dim=-1
-        )  # preds表示对应的prediction_score预测出的token在voca中的id。维度为[batch_size,token_len]
+        _, preds = shift_logits.max(dim=-1)  # preds表示对应的prediction_score预测出的token在vocab中的id。维度为[batch_size,token_len]
 
         # 对非self.pad_id的token的loss进行求平均，且计算出预测的准确率
-        not_ignore = shift_labels.ne(
-            self.pad_id
-        )  # 进行非运算，返回一个tensor，若targets_view的第i个位置为self.pad_id，则置为0，否则为1
-        num_targets = not_ignore.long().sum().item(
-        )  # 计算target中的非self.pad_id的数量
+        not_ignore = shift_labels.ne(self.pad_id)  # 进行非运算，返回一个tensor，若targets_view的第i个位置为self.pad_id，则置为0，否则为1
+        num_targets = not_ignore.long().sum().item()  # 计算target中的非self.pad_id的数量
 
-        correct = (shift_labels
-                   == preds) & not_ignore  # 计算model预测正确的token的个数，排除pad的tokne
+        correct = (shift_labels == preds) & not_ignore  # 计算model预测正确的token的个数，排除pad的tokne
         correct = correct.float().sum()
 
         accuracy = correct / num_targets
@@ -608,6 +581,7 @@ class TrainLoop_GPT2():
         self.optimizer.zero_grad()
 
 
+# 注意Ours继承于GTP2
 class TrainLoop_Ours(TrainLoop_GPT2):
     def __init__(self, args, logger):
         super(TrainLoop_Ours, self).__init__(args, logger)
@@ -628,8 +602,7 @@ class TrainLoop_Ours(TrainLoop_GPT2):
             history = []  # list of id, to model
 
             for message in conv['messages']:
-                message_id, role, content = int(
-                    message['local_id']), message['role'], message['content']
+                message_id, role, content = int(message['local_id']), message['role'], message['content']
                 identity = str(conv_id) + '/' + str(message_id)
                 if role == 'Recommender' and message_id != 1:
                     if self.args.save_samples_path:
@@ -641,22 +614,13 @@ class TrainLoop_Ours(TrainLoop_GPT2):
                     if identity in identity2topicId:
                         kw = id2topic[int(identity2topicId[identity])]
                     if identity in identity2movieId:
-                        kw = '《' + movieid2name[
-                            identity2movieId[identity]] + '》'
+                        kw = '《' + movieid2name[identity2movieId[identity]] + '》'
 
-                    kw_id_list = [
-                        self.tokenizer.convert_tokens_to_ids(word)
-                        for word in kw
-                    ] + [self.tokenizer.sep_token_id]
-                    input_ids = [
-                        self.tokenizer.cls_token_id
-                    ] + kw_id_list + history[
-                        -self.args.max_context_len + 1 +
-                        len(kw_id_list):]  # 每个input以[CLS]为开头 [SEP]结尾
+                    kw_id_list = [self.tokenizer.convert_tokens_to_ids(word) for word in kw] + [self.tokenizer.sep_token_id]
+                    input_ids = [self.tokenizer.cls_token_id] + kw_id_list + history[ -self.args.max_context_len + 1 + len(kw_id_list):]  # 每个input以[CLS]为开头 [SEP]结尾
 
                     # tensor of [input_token_num]
-                    curr_input_tensor = torch.tensor(input_ids).long().to(
-                        self.device)
+                    curr_input_tensor = torch.tensor(input_ids).long().to(self.device)
                     generated = []
                     # 最多生成max_len个token
                     for _ in range(self.args.max_len):
@@ -666,37 +630,31 @@ class TrainLoop_Ours(TrainLoop_GPT2):
                         next_token_logits = outputs[0][-1, :]
                         # 对于已生成的结果generated中的每个token添加一个重复惩罚项，降低其生成概率
                         for id in set(generated):
-                            next_token_logits[
-                                id] /= self.args.repetition_penalty
+                            next_token_logits[id] /= self.args.repetition_penalty
                         next_token_logits = next_token_logits / self.args.temperature
+
                         # 对于[UNK]的概率设为无穷小，也就是说模型的预测结果不可能是[UNK]这个token
-                        next_token_logits[self.tokenizer.convert_tokens_to_ids(
-                            '[UNK]')] = -float('Inf')
-                        # 将topk以外的token的概率设置为-inf，然后排序，然后将accum-概率大与topp的token的概率设置为-inf
+                        next_token_logits[self.tokenizer.convert_tokens_to_ids('[UNK]')] = -float('Inf')
+                        # 将topk以外的token的概率设置为-inf，然后排序，然后将accum-概率大与top-p的token的概率设置为-inf
                         filtered_logits = top_k_top_p_filtering(
                             next_token_logits,
                             top_k=self.args.topk,
                             top_p=self.args.topp)
+
                         # torch.multinomial表示从候选集合中无放回地进行抽取num_samples个元素，权重越高，抽到的几率越高，返回元素的下标
-                        next_token = torch.multinomial(F.softmax(
-                            filtered_logits, dim=-1),
-                                                       num_samples=1)
+                        next_token = torch.multinomial(F.softmax(filtered_logits, dim=-1), num_samples=1)
                         if next_token == self.tokenizer.sep_token_id:  # 遇到[SEP]则表明response生成结束
                             break
-                        generated.append(next_token.item())
-                        curr_input_tensor = torch.cat(
-                            (curr_input_tensor, next_token),
-                            dim=0)[-self.n_ctx:]
+                        generated.append(next_token.item()) # 单个数据
+                        curr_input_tensor = torch.cat((curr_input_tensor, next_token), dim=0)[-self.n_ctx:]
+
                     # generated 生成的utter的ids
-                    generated_text = self.tokenizer.convert_ids_to_tokens(
-                        generated)
+                    generated_text = self.tokenizer.convert_ids_to_tokens(generated)
                     if self.args.save_samples_path:
                         samples_file.write("{}\n".format(kw))
-                        samples_file.write("[Generated]: {}\n\n".format(
-                            "".join(generated_text)))
-                history.extend(
-                    self.tokenizer.encode(content) +
-                    [self.tokenizer.sep_token_id])  #? encode成了啥
+                        samples_file.write("[Generated]: {}\n\n".format("".join(generated_text)))
+
+                history.extend(self.tokenizer.encode(content) + [self.tokenizer.sep_token_id])  #? encode成了啥
 
         samples_file.close()
 
@@ -712,6 +670,7 @@ class TrainLoop_Ours(TrainLoop_GPT2):
         self.logger.info(
             "tokenizing raw data,raw data path:{}, token output path:{}".
             format(self.args.train_raw_path, self.args.train_tokenized_path))
+
         if subset == 'train':
             raw_path = self.args.train_raw_path
         elif subset == 'valid':
@@ -748,10 +707,9 @@ class TrainLoop_Ours(TrainLoop_GPT2):
                     # print(utterance) # string
                     # dialogue_ids.extend([tokenizer.convert_tokens_to_ids(word) for word in utterance])
                     word_list = [word for word in utterance]
-                    dialogue_ids.extend(
-                        self.tokenizer.convert_tokens_to_ids(word_list))
-                    dialogue_ids.append(self.tokenizer.sep_token_id
-                                        )  # 每个utterance之后添加[SEP]，表示utterance结束
+                    dialogue_ids.extend(self.tokenizer.convert_tokens_to_ids(word_list))
+                    dialogue_ids.append(self.tokenizer.sep_token_id)  # 每个utterance之后添加[SEP]，表示utterance结束
+
                 # 对超过n_ctx的长度进行截断,否则GPT2模型会报错
                 ###############################m
                 dialogue_ids = [self.tokenizer.cls_token_id] + \
@@ -764,6 +722,4 @@ class TrainLoop_Ours(TrainLoop_GPT2):
                 # 最后一条记录不添加换行符
                 if dialogue_index < len(train_data) - 1:
                     f.write("\n")
-        self.logger.info(
-            "finish preprocessing raw data,the result is stored in {}".format(
-                self.args.train_tokenized_path))
+        self.logger.info("finish preprocessing raw data,the result is stored in {}".format(self.args.train_tokenized_path))

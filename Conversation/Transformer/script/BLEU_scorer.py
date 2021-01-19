@@ -10,7 +10,7 @@ import jieba
 # print("Use dictionary just generate")
 
 def bleu_cal(sen1, tar1):
-    bleu1 = sentence_bleu([tar1], sen1, weights=(1, 0, 0, 0))
+    bleu1 = sentence_bleu(references=[tar1], hypothesis=sen1, weights=(1, 0, 0, 0))
     bleu2 = sentence_bleu([tar1], sen1, weights=(0, 1, 0, 0))
     bleu3 = sentence_bleu([tar1], sen1, weights=(0, 0, 1, 0))
     bleu4 = sentence_bleu([tar1], sen1, weights=(0, 0, 0, 1))

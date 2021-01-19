@@ -22,14 +22,14 @@ import math
 class IntentionClassifier(nn.Module):
     def __init__(self, args, bert_embed_size=768):
         super(IntentionClassifier, self).__init__()
-        self.state2topic_id = nn.Linear(bert_embed_size, args.topic_class_num)
+        self.full_connection = nn.Linear(bert_embed_size, args.topic_class_num)
 
     def forward(self, profile_pooled, bs, sent_num, word_num):
         profile_pooled = profile_pooled.view(bs, sent_num, -1)
         # (batch_size, hidden)
         profile_pooled = torch.mean(profile_pooled, dim=1)
 
-        out_topic_id = self.state2topic_id(profile_pooled)
+        out_topic_id = self.full_connection(profile_pooled)
 
         return out_topic_id
 
@@ -53,8 +53,7 @@ class Model(nn.Module):
             # 如果是加载已经微调好的
             bert_path3 = bert_path3 + '/3'
 
-        self.profile_bert = BertModel.from_pretrained(
-            bert_path3)  # /bert_pretrain/
+        self.profile_bert = BertModel.from_pretrained(bert_path3)  # /bert_pretrain/
         # to check
         for model in [self.profile_bert]:
             for param in model.parameters():
@@ -75,18 +74,17 @@ class Model(nn.Module):
         if not os.path.exists(self.save_path3):
             os.mkdir(self.save_path3)
 
+    # 只用usre_profile bert进行topic预测
     def forward(self, x):
-        context, context_mask, topic_path_kw, tp_mask, user_profile, profile_mask = x
+        context, context_mask, topic_path_kw, topic_mask, user_profile, profile_mask = x
 
-        bs, sent_num, word_num = user_profile.shape
+        batch_size, sent_num, word_num = user_profile.shape
         user_profile = user_profile.view(-1, user_profile.shape[-1])
         profile_mask = profile_mask.view(-1, profile_mask.shape[-1])
         # (batch_size, word_num, hidden)
-        profile_last_hidden_state, profile_pooled = self.profile_bert(
-            user_profile, profile_mask)
+        profile_last_hidden_state, profile_pooled = self.profile_bert(user_profile, profile_mask)
 
-        out_topic_id = self.intention_classifier(profile_pooled, bs, sent_num,
-                                                 word_num)
+        out_topic_id = self.intention_classifier(profile_pooled, batch_size, sent_num, word_num)
 
         return out_topic_id
 
@@ -99,8 +97,7 @@ class Model(nn.Module):
     def save_model(self, save_path):
         self.profile_bert.save_pretrained(self.save_path3)
 
-        self.intention_classifier.save_model(
-            join(self.save_path3, self.addition_save_name))
+        self.intention_classifier.save_model(join(self.save_path3, self.addition_save_name))
 
     def load_addition_params(self, path):
         self.intention_classifier.load_model(path)

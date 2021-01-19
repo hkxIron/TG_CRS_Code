@@ -77,35 +77,37 @@ class Model(nn.Module):
         if not os.path.exists(args.model_save_path):
             os.mkdir(args.model_save_path)
 
+    # 利用context, topic, profile序列输入lstm来预测下一个topic id
     def forward(self, x):
         context, len_context, topic_path_kw, topic_path_attitude, len_topic, user_profile, len_profile = x
-        # user_profile:[batch_size, sent_num, word_num]
+        # user_profile:[batch_size, sentence_num, word_num]
         batch_size, sent_num, word_num = user_profile.shape
-        user_profile = user_profile.view(-1, word_num)  # (batch_size*sent_num, word_num)
-        len_profile = len_profile.view(-1)  #(batch_size*sent_num)
+        user_profile = user_profile.view(-1, word_num)  # (batch_size*sentence_num, word_num)
+        len_profile = len_profile.view(-1)  # (batch_size*sentence_num)
 
         context = self.embeddings(context)
         topic_path_kw = self.embeddings(topic_path_kw)
         user_profile = self.embeddings(user_profile)
 
-        context = pack_padded_sequence(context,
-                                       len_context,
+        context = pack_padded_sequence(input=context,
+                                       lengths=len_context,
                                        enforce_sorted=False,
                                        batch_first=True)
-        topic_path_kw = pack_padded_sequence(topic_path_kw,
-                                             len_topic,
+        topic_path_kw = pack_padded_sequence(input=topic_path_kw,
+                                             lengths=len_topic,
                                              enforce_sorted=False,
                                              batch_first=True)
-        user_profile = pack_padded_sequence(user_profile,
-                                            len_profile,
+        user_profile = pack_padded_sequence(input=user_profile,
+                                            lengths=len_profile,
                                             enforce_sorted=False,
                                             batch_first=True)
-
+        # hidden_0
         init_h0 = (torch.zeros(self.args.num_layers, batch_size, self.args.hidden_size).to(self.args.device),
                    torch.zeros(self.args.num_layers, batch_size, self.args.hidden_size).to(self.args.device))
 
         # batch, seq_len, num_directions * hidden_size        # num_layers * num_directions, batch, hidden_size
-        context_output, (context_h, _) = self.context_lstm(context, init_h0)
+        # output, (last_hidden_state, last_cell_state)
+        context_output, (context_h, _) = self.context_lstm(input=context, hx=init_h0)
         topic_output, (topic_h, _) = self.topic_lstm(topic_path_kw, init_h0)
 
         # batch*sent_num, seq_len, num_directions * hidden_size
@@ -130,7 +132,7 @@ class Model(nn.Module):
 
     def compute_loss(self, output, y_type, y_topic_id, subset='test'):
         out_topic_id = output
-        loss_topic_id = F.cross_entropy(out_topic_id, y_topic_id)
+        loss_topic_id = F.cross_entropy(input=out_topic_id, target=y_topic_id)
         return loss_topic_id
 
     def save_model(self, save_path):
